@@ -1,10 +1,46 @@
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
+from tutu.cli import build_parser
+from tutu.config import masked
+from tutu.lookup.file import local_file_info
+from tutu.lookup.hash import hash_kind
 from tutu.models import Item, SourceResult
 from tutu.search import merge_vulnerabilities, sort_cards
 from tutu.sources.loudong import _card_items
 from tutu.sources.threatbook import solve_challenge
 from tutu.utils import is_cve_prefix, is_exact_cve
+
+
+def test_hash_kind_and_mask():
+    assert hash_kind("44d88612fea8a8f36de82e1278abb02f") == "md5"
+    assert hash_kind("275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f") == "sha256"
+    assert hash_kind("not-a-hash") is None
+    assert masked("abcdef1234567890").startswith("abcd")
+    assert masked(None) == "未配置"
+
+
+def test_local_file_info():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "sample.txt"
+        path.write_text("hello tutu\n", encoding="utf-8")
+        info = local_file_info(path)
+    assert info["name"] == "sample.txt"
+    assert info["size"] == len("hello tutu\n")
+    assert len(info["hashes"]["sha256"]) == 64
+    assert "text" in info["type"]
+
+
+def test_cli_new_modes_parse():
+    args = build_parser().parse_args(["-ip", "8.8.8.8"])
+    assert args.ip == "8.8.8.8"
+    args = build_parser().parse_args(["-hash", "44d88612fea8a8f36de82e1278abb02f"])
+    assert args.hash.startswith("44d8")
+    args = build_parser().parse_args(["config", "set", "threatbook", "x"])
+    assert args.query == "config"
+    assert args.extra == ["set", "threatbook", "x"]
 
 
 def test_threatbook_challenge_solver():

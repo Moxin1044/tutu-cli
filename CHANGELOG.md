@@ -26,6 +26,21 @@
 - SOCRadar Ransomware
 - Ransomwatch
 
+### IP / 哈希 / 文件
+
+- `tutu -ip 8.8.8.8`：IP 归属、ASN、代理/IDC 标记、ThreatBook / VirusTotal / OTX 情报
+- `tutu -hash <HASH>`：CIRCL Hashlookup、OTX、ThreatBook 多引擎、VirusTotal
+- `tutu -file <PATH>`：本地 MD5/SHA1/SHA256/SHA512、类型识别、公开情报、VirusTotal / 微步沙箱上传
+- `--no-upload`：只查哈希，不上传沙箱
+- `--sandbox` / `--run-time`：微步沙箱参数
+
+### 配置
+
+- `tutu -config` 交互配置微步 / VirusTotal API Key
+- `tutu config show|set|unset|path`
+- Key 持久化到 `~/.config/tutu/config.json`（权限 0600）
+- 支持 `TUTU_THREATBOOK_API_KEY` / `TUTU_VIRUSTOTAL_API_KEY` 等环境变量
+
 ### CLI
 
 - `tutu -v CVE-2026`

@@ -1,8 +1,8 @@
 # tutu — 多源漏洞与威胁情报聚合搜索
 
-[![CI](https://github.com/Moxin1044/tutu/actions/workflows/ci.yml/badge.svg)](https://github.com/Moxin1044/tutu/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/tutu-vuln-intel.svg)](https://pypi.org/project/tutu-vuln-intel/)
-[![Python](https://img.shields.io/pypi/pyversions/tutu-vuln-intel.svg)](https://pypi.org/project/tutu-vuln-intel/)
+[![CI](https://github.com/Moxin1044/tutu-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/Moxin1044/tutu-cli/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/tutu-cli.svg)](https://pypi.org/project/tutu-cli/)
+[![Python](https://img.shields.io/pypi/pyversions/tutu-cli.svg)](https://pypi.org/project/tutu-cli/)
 
 `tutu` 是一个 Python 编写的命令行漏洞 / 威胁情报聚合搜索工具，目标是 **开箱即用、无需配置账号或 Token**：
 
@@ -39,6 +39,16 @@ tutu -t lockbit --limit 10
   - RansomLook：公开 API
   - SOCRadar Ransomware：公开 Web API
   - Ransomwatch：GitHub 公开 JSON
+- **IP / 哈希 / 文件 `-ip` `-hash` `-file`**
+  - IP 信誉、地理位置、ASN/组织、代理/IDC 标记
+  - IP 情报：ThreatBook、VirusTotal、AlienVault OTX
+  - 哈希情报：CIRCL Hashlookup、OTX、ThreatBook、VirusTotal
+  - 文件本地哈希（MD5/SHA1/SHA256/SHA512）、类型识别
+  - VirusTotal / 微步沙箱上传与多引擎结果
+- **本地配置 `-config`**
+  - 交互式配置微步在线 API Key、VirusTotal API Key
+  - 保存到本地 `~/.config/tutu/config.json`，权限 `0600`
+  - 支持环境变量覆盖，不把 Key 写入仓库
 - **工程化**
   - 多线程并行查询，单源失败不影响整体
   - 本地 JSON 缓存（KEV、组织列表、站点页面等）
@@ -54,9 +64,9 @@ tutu -t lockbit --limit 10
 **从 PyPI 安装（发布后）：**
 
 ```bash
-pip install tutu-vuln-intel
+pip install tutu-cli
 # 或
-pipx install tutu-vuln-intel
+pipx install tutu-cli
 ```
 
 安装完成后直接运行 `tutu`：
@@ -69,8 +79,8 @@ tutu -v CVE-2026
 **从源码安装：**
 
 ```bash
-git clone https://github.com/Moxin1044/tutu.git
-cd tutu
+git clone https://github.com/Moxin1044/tutu-cli.git
+cd tutu-cli
 pip install .
 ```
 
@@ -114,8 +124,28 @@ tutu -t lockbit --sources ransomware_live,ransomlook,socradar
 # 同时查漏洞和情报
 tutu -v CVE-2024-3400 -t CVE-2024-3400
 
+# IP 信誉 / 归属 / IOC
+tutu -ip 8.8.8.8
+tutu -ip 159.203.93.255 --json
+
+# 哈希情报
+tutu -hash 44d88612fea8a8f36de82e1278abb02f
+
+# 文件本地哈希 + 公开情报 + 沙箱上传（需要 Key）
+tutu -file sample.exe
+tutu -file sample.exe --no-upload
+tutu -file sample.exe --sandbox win10_1903_enx64_office2016 --run-time 120
+
+# 配置微步 / VirusTotal API Key（本地持久化）
+tutu -config
+tutu config show
+tutu config set threatbook <KEY>
+tutu config set virustotal <KEY>
+tutu config path
+
 # JSON
 tutu -v CVE-2021-44228 --json > result.json
+tutu -ip 8.8.8.8 --json > ip.json
 
 # 查看数据源
 tutu sources
@@ -124,12 +154,58 @@ tutu sources
 tutu -t CVE-2026 --sources loudong --deep
 ```
 
+### API Key 配置
+
+`-v` / `-t` 不需要任何 Key。`-ip` / `-hash` / `-file` 会自动使用已配置的微步和 VirusTotal Key 补充情报：
+
+```bash
+tutu -config
+```
+
+建议用交互方式输入 Key，避免出现在 shell history；`tutu config set ...` 仅用于自动化环境。
+
+配置文件默认位置：
+
+```text
+~/.config/tutu/config.json
+```
+
+权限为 `0600`。也可以使用环境变量（优先级高于配置文件）：
+
+```bash
+export TUTU_THREATBOOK_API_KEY=...
+export TUTU_VIRUSTOTAL_API_KEY=...
+```
+
+支持的其他变量名：
+
+```text
+THREATBOOK_API_KEY
+VIRUSTOTAL_API_KEY
+VT_API_KEY
+```
+
+`-file` 默认会在配置了 Key 时上传到 VirusTotal / 微步沙箱；如果只想本地计算哈希和查询公开情报库：
+
+```bash
+tutu -file sample.exe --no-upload
+```
+
+> 上传文件前请确认文件内容可以发送给第三方沙箱。工具不会上传未配置 Key 的站点。
+
 ### 常用参数
 
 | 参数 | 说明 |
 | --- | --- |
 | `-v, --vuln QUERY` | 漏洞聚合搜索 |
 | `-t, --threat QUERY` | 威胁情报搜索 |
+| `-ip, --ip IP` | IP 信誉 / 归属 / IOC 查询 |
+| `-hash, --hash HASH` | MD5 / SHA1 / SHA256 哈希查询 |
+| `-file, --file PATH` | 文件哈希、公开情报与沙箱上传 |
+| `-config, --config` | 交互配置微步 / VirusTotal API Key |
+| `--no-upload` | `-file` 只做本地哈希和公开情报查询 |
+| `--sandbox TYPE` | 微步沙箱类型，默认 `win7_sp1_enx86_office2013` |
+| `--run-time SEC` | 微步沙箱运行时间，默认 60 秒 |
 | `-s, --sources LIST` | 逗号分隔数据源，例如 `nvd,kev`；`all` 表示全部 |
 | `-l, --limit N` | 每个来源 / 卡片的最大展示条数，默认 8 |
 | `--timeout N` | 单请求超时秒数，默认 20 |
@@ -220,6 +296,14 @@ tutu  ·  漏洞与威胁情报聚合搜索
 | RansomLook | `/api/search?q=` | 组织 / 帖子 |
 | SOCRadar | `/api/ransomware/search?q=` | 受害者 / 组织 |
 | Ransomwatch | `raw.githubusercontent.com/joshhighet/ransomwatch/main/posts.json` | 泄露帖子 |
+| ipwho.is | `/8.8.8.8` | IP 归属 |
+| ipinfo.io | `/{ip}/json` | IP 归属 / 主机名 |
+| ip-api.com | `/json/{ip}` | IP 归属 / 代理标记 |
+| AlienVault OTX | `/api/v1/indicators/IPv4/{ip}/general`、`/file/{hash}/general` | IP / 哈希情报（免 Key） |
+| CIRCL | `hashlookup.circl.lu/lookup/{kind}/{hash}` | 哈希文件情报（免 Key） |
+| 微步 API | `/v3/scene/ip_reputation`、`/v3/file/report`、`/v3/file/report/multiengines` | IP / 哈希（需 Key） |
+| 微步沙箱 | `POST /v3/file/upload` | 文件沙箱（需 Key） |
+| VirusTotal | `/api/v3/ip_addresses/{ip}`、`/files/{hash}`、`POST /files` | IP / 哈希 / 沙箱（需 Key） |
 
 > 这些接口均为站点前端实际调用的公开接口或公开 HTML 页面，可能随站点改版而变化；工具已对失败做降级处理，不会因单站改版而整体不可用。
 

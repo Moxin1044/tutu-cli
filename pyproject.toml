@@ -1,14 +1,15 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tutu-vuln-intel"
+name = "tutu-cli"
 version = "0.1.0"
 description = "tutu — 多源漏洞与威胁情报聚合搜索 CLI（NVD / CISA KEV / NSFOCUS / 微步 / 360 / 勒索软件情报等）"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "tutu contributors" }]
 keywords = ["vulnerability", "threat-intelligence", "cve", "nvd", "kev", "ransomware", "osint", "cli"]
 classifiers = [
@@ -36,10 +37,10 @@ dev = ["pytest>=7", "build>=1.2", "twine>=5"]
 tutu = "tutu.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/Moxin1044/tutu"
-Repository = "https://github.com/Moxin1044/tutu"
-Issues = "https://github.com/Moxin1044/tutu/issues"
-Changelog = "https://github.com/Moxin1044/tutu/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/Moxin1044/tutu-cli"
+Repository = "https://github.com/Moxin1044/tutu-cli"
+Issues = "https://github.com/Moxin1044/tutu-cli/issues"
+Changelog = "https://github.com/Moxin1044/tutu-cli/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["tutu*"]

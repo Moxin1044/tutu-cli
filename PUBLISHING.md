@@ -1,6 +1,6 @@
 # 发布说明
 
-本文档说明如何把 `tutu-vuln-intel` 发布到 PyPI。默认使用 **GitHub Trusted Publishing（OIDC）**，不需要在 GitHub 中保存 PyPI Token。
+本文档说明如何把 `tutu-cli` 发布到 PyPI。默认使用 **GitHub Trusted Publishing（OIDC）**，不需要在 GitHub 中保存 PyPI Token。
 
 ## 1. 首次配置 PyPI Trusted Publisher
 
@@ -13,9 +13,9 @@
 
 | 字段 | 值 |
 | --- | --- |
-| PyPI Project Name | `tutu-vuln-intel` |
+| PyPI Project Name | `tutu-cli` |
 | Owner | `Moxin1044` |
-| Repository name | `tutu` |
+| Repository name | `tutu-cli` |
 | Workflow name | `release.yml` |
 | Environment name | `pypi` |
 
@@ -56,7 +56,7 @@ git push origin v0.1.0
 发布完成后验证：
 
 ```bash
-pip install -U tutu-vuln-intel
+pip install -U tutu-cli
 tutu --version
 ```
 
@@ -82,10 +82,10 @@ PYPI_API_TOKEN = pypi-...   # PyPI API Token
 
 ## 5. 包名说明
 
-- PyPI 发行名：`tutu-vuln-intel`
+- PyPI 发行名：`tutu-cli`
 - 安装后命令：`tutu`
 
 ```bash
-pip install tutu-vuln-intel
+pip install tutu-cli
 tutu -v CVE-2026
 ```

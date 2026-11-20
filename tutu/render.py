@@ -238,6 +238,226 @@ def print_error(console: Console, message: str) -> None:
     console.print(f"[bold red]错误:[/bold red] {message}")
 
 
+def _kv_table(title: str, rows: Sequence[tuple]) -> Table:
+    table = Table(title=title, box=box.SIMPLE_HEAD, show_edge=False, title_justify="left")
+    table.add_column("字段", style="cyan", no_wrap=True)
+    table.add_column("值", overflow="fold")
+    for key, value in rows:
+        if value in (None, "", [], {}):
+            continue
+        table.add_row(str(key), str(value))
+    return table
+
+
+def risk_style(risk: str) -> str:
+    return {
+        "malicious": "bold red",
+        "suspicious": "bold yellow",
+        "clean": "bold green",
+        "unknown": "bold white",
+    }.get((risk or "").lower(), "bold white")
+
+
+def print_ip_report(console: Console, report: dict) -> None:
+    console.print()
+    title = Text()
+    title.append("IP 情报  ", style="bold cyan")
+    title.append(report.get("ip", ""), style="bold white")
+    rep = report.get("reputation") or {}
+    title.append("  ")
+    title.append(f" {rep.get('risk', 'unknown').upper()} ", style=risk_style(rep.get("risk", "")))
+    console.print(title)
+    console.print(Text(f"私有/保留地址: {'是' if report.get('private') else '否'}", style="dim"))
+
+    geo = report.get("geo") or {}
+    console.print(
+        _kv_table(
+            "地理位置",
+            [
+                ("国家", geo.get("country")),
+                ("地区", geo.get("region")),
+                ("城市", geo.get("city")),
+                ("时区", geo.get("timezone")),
+                ("经纬度", f"{geo.get('latitude')}, {geo.get('longitude')}" if geo.get("latitude") is not None else ""),
+                ("主机名", geo.get("hostname")),
+            ],
+        )
+    )
+    console.print(
+        _kv_table(
+            "网络归属",
+            [
+                ("ASN", report.get("asn")),
+                ("组织", report.get("org")),
+                ("ISP", report.get("isp")),
+                ("代理", report.get("flags", {}).get("proxy")),
+                ("托管/IDC", report.get("flags", {}).get("hosting")),
+                ("移动网络", report.get("flags", {}).get("mobile")),
+            ],
+        )
+    )
+
+    tb = report.get("threatbook") or {}
+    vt = report.get("virustotal") or {}
+    otx = report.get("otx") or {}
+    rep_rows = [
+        ("综合判定", " · ".join(rep.get("reasons") or [])),
+        ("ThreatBook", " · ".join(
+            str(x)
+            for x in (
+                tb.get("severity"),
+                f"scene={tb.get('scene')}" if tb.get("scene") else "",
+                f"confidence={tb.get('confidence')}" if tb.get("confidence") else "",
+                f"malicious={tb.get('is_malicious')}" if tb.get("is_malicious") is not None else "",
+                tb.get("permalink"),
+            )
+            if x
+        ) or "未配置或未返回"),
+        ("ThreatBook 标签", " · ".join(tb.get("tags") or [])),
+        ("ThreatBook 判定", " · ".join(tb.get("judgments") or [])),
+        ("ThreatBook 更新时间", tb.get("update_time")),
+        ("VirusTotal", f"reputation={vt.get('reputation')} stats={vt.get('stats')}" if vt else "未配置或未返回"),
+        ("OTX pulses", otx.get("pulse_count")),
+        ("OTX 标签", " · ".join(otx.get("tags") or [])),
+        ("OTX 校验", " · ".join(otx.get("validation") or [])),
+    ]
+    console.print(_kv_table("威胁情报", rep_rows))
+    if report.get("errors"):
+        console.print(
+            _kv_table(
+                "未成功的数据源",
+                [(k, v) for k, v in report["errors"].items()],
+            )
+        )
+    console.print()
+
+
+def print_hash_report(console: Console, report: dict) -> None:
+    console.print()
+    rep = report.get("reputation") or {}
+    title = Text()
+    title.append("文件哈希  ", style="bold cyan")
+    title.append(report.get("hash", ""), style="bold white")
+    title.append("  ")
+    title.append(f" {rep.get('risk', 'unknown').upper()} ", style=risk_style(rep.get("risk", "")))
+    console.print(title)
+    console.print(Text(f"类型: {report.get('kind', '')}", style="dim"))
+
+    file_info = report.get("file") or {}
+    console.print(
+        _kv_table(
+            "文件信息",
+            [
+                ("文件名", file_info.get("name")),
+                ("大小", file_info.get("size")),
+                ("类型", file_info.get("type")),
+                ("恶意家族", file_info.get("malware_family")),
+                ("恶意类型", file_info.get("malware_type")),
+                ("多引擎", file_info.get("detections")),
+                ("标签", " · ".join(file_info.get("tags") or [])),
+            ],
+        )
+    )
+    console.print(
+        _kv_table(
+            "哈希",
+            [(k.upper(), v) for k, v in (report.get("hashes") or {}).items() if v],
+        )
+    )
+
+    tb = report.get("threatbook") or {}
+    tb_multi = report.get("threatbook_multi") or {}
+    vt = report.get("virustotal") or {}
+    circl = report.get("circl") or {}
+    otx = report.get("otx") or {}
+    console.print(
+        _kv_table(
+            "检测结果",
+            [
+                ("综合判定", " · ".join(rep.get("reasons") or [])),
+                ("ThreatBook", f"{tb.get('threat_level', '')} {tb.get('malware_family', '')} score={tb.get('threat_score', '')}".strip() if tb else "无记录/未配置"),
+                ("ThreatBook 多引擎", f"{tb_multi.get('positives', '?')}/{tb_multi.get('total', '?')} {tb_multi.get('scan_date', '')}".strip() if tb_multi else "无记录/未配置"),
+                ("VirusTotal", f"malicious={vt.get('stats', {}).get('malicious', 'N/A')} label={vt.get('threat_label', '')}" if vt else "无记录/未配置"),
+                ("CIRCL", f"{circl.get('file_name', '')} {circl.get('known_malicious', '')}".strip() if circl else "未命中"),
+                ("OTX pulses", otx.get("pulse_count")),
+                ("OTX 标签", " · ".join(otx.get("tags") or [])),
+                ("链接", tb.get("permalink")),
+            ],
+        )
+    )
+    detections = tb.get("detections") or tb_multi.get("detections") or []
+    if detections:
+        console.print("[bold]ThreatBook 引擎命中[/bold]")
+        for line in detections[:8]:
+            console.print(f"  • {line}")
+    if report.get("errors"):
+        console.print(_kv_table("未成功的数据源", [(k, v) for k, v in report["errors"].items()]))
+    console.print()
+
+
+def print_file_report(console: Console, report: dict) -> None:
+    info = report.get("file") or {}
+    console.print()
+    console.print(Text.assemble(("文件分析  ", "bold cyan"), (info.get("name", ""), "bold white")))
+    console.print(
+        _kv_table(
+            "本地信息",
+            [
+                ("路径", info.get("path")),
+                ("大小", info.get("size")),
+                ("类型", info.get("type")),
+                ("修改时间", info.get("mtime")),
+            ],
+        )
+    )
+    console.print(
+        _kv_table(
+            "哈希",
+            [(k.upper(), v) for k, v in (info.get("hashes") or {}).items() if v],
+        )
+    )
+    lookup = report.get("lookup") or {}
+    if lookup:
+        rep = lookup.get("reputation") or {}
+        console.print(
+            _kv_table(
+                "哈希情报",
+                [
+                    ("综合判定", f"{rep.get('risk', 'unknown')} · " + " · ".join(rep.get("reasons") or [])),
+                    ("文件名", (lookup.get("file") or {}).get("name")),
+                    ("恶意家族", (lookup.get("file") or {}).get("malware_family")),
+                    ("VirusTotal", str((lookup.get("virustotal") or {}).get("stats")) if lookup.get("virustotal") else "无记录/未配置"),
+                    ("ThreatBook", (lookup.get("threatbook") or {}).get("threat_level") if lookup.get("threatbook") else "无记录/未配置"),
+                ],
+            )
+        )
+    uploads = report.get("uploads") or {}
+    if uploads:
+        rows = []
+        for name, data in uploads.items():
+            if not isinstance(data, dict):
+                continue
+            rows.append(
+                (
+                    name,
+                    " · ".join(
+                        str(x)
+                        for x in (
+                            data.get("status"),
+                            data.get("stats"),
+                            data.get("summary"),
+                            data.get("error"),
+                        )
+                        if x
+                    ),
+                )
+            )
+        console.print(_kv_table("沙箱上传", rows))
+    for note in report.get("notes") or []:
+        console.print(Text("• " + note, style="yellow"))
+    console.print()
+
+
 def print_no_args(console: Console) -> None:
     banner(console, "-", "vuln", [])
     console.print("[bold]用法[/bold]")
@@ -245,7 +465,11 @@ def print_no_args(console: Console) -> None:
     console.print("  [cyan]tutu CVE-2021-44228[/cyan]          省略 -v 时默认按漏洞搜索")
     console.print("  [cyan]tutu -t APT28[/cyan]                威胁情报搜索（绿盟 / 微步 / 360 / 勒索软件…）")
     console.print("  [cyan]tutu -t lockbit --limit 10[/cyan]   限制每个来源的展示条数")
+    console.print("  [cyan]tutu -ip 8.8.8.8[/cyan]             IP 信誉 / 归属 / IOC 查询")
+    console.print("  [cyan]tutu -hash <MD5|SHA1|SHA256>[/cyan] 哈希情报查询")
+    console.print("  [cyan]tutu -file sample.exe[/cyan]        文件哈希 + 沙箱上传")
+    console.print("  [cyan]tutu -config[/cyan]                 配置微步 / VirusTotal API Key")
     console.print("  [cyan]tutu sources[/cyan]                 查看全部数据源")
     console.print("  [cyan]tutu -v log4j --json[/cyan]         输出 JSON")
     console.print()
-    console.print("[dim]提示: 所有默认数据源均无需账号或 Token；部分站点有反爬/登录限制，会在结果中标注。[/dim]")
+    console.print("[dim]提示: -v/-t 默认无需账号；-ip/-hash/-file 的增强情报可使用微步/VirusTotal Key。[/dim]")

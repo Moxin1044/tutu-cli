@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 — 2026-11-21
+
+- 修复 `--json` 输出中 SOCRadar CVE 嵌套 Exploit 条目无法序列化的问题
+- 完善 SOCRadar IOC / CISA / 公开源字段的 JSON 序列化
+
 ## 0.2.0 — 2026-11-21
 
 ### 新增漏洞源

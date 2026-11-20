@@ -4,6 +4,16 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
 
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, Item):
+        return value.to_dict()
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(v) for v in value]
+    return value
+
+
 @dataclass
 class Item:
     """一条聚合结果。
@@ -35,7 +45,7 @@ class Item:
             "severity": self.severity,
             "score": self.score,
             "tags": list(self.tags),
-            "extra": dict(self.extra),
+            "extra": _jsonable(dict(self.extra)),
         }
 
 

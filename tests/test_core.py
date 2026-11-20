@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -44,6 +45,27 @@ def test_cli_new_modes_parse():
     args = build_parser().parse_args(["config", "set", "threatbook", "x"])
     assert args.query == "config"
     assert args.extra == ["set", "threatbook", "x"]
+
+
+def test_item_json_nested():
+    item = Item(
+        source="x",
+        category="vulnerability",
+        title="CVE-2026-0001",
+        extra={
+            "exploits": [
+                Item(
+                    source="x",
+                    category="exploit",
+                    title="PoC",
+                    url="https://example.com/poc",
+                )
+            ]
+        },
+    )
+    data = item.to_dict()
+    assert data["extra"]["exploits"][0]["title"] == "PoC"
+    assert "CVE-2026-0001" in json.dumps(data)
 
 
 def test_vulnx_parse_row():

@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional
 from ..config import get_api_key
 from ..http import HttpClient, SourceError
 from ..utils import clean_text, truncate
+from .socradar import ioc_detail as socradar_ioc_detail
+from .socradar import ioc_risk as socradar_ioc_risk
+from .socradar import parse_ioc as parse_socradar_ioc
 
 IPWHO = "https://ipwho.is/{ip}"
 IPINFO = "https://ipinfo.io/{ip}/json"
@@ -75,6 +78,15 @@ def _threatbook(http: HttpClient, ip: str, key: str) -> Dict[str, Any]:
             if first is not None:
                 payload = first
     return payload if isinstance(payload, dict) else {}
+
+
+def _socradar_ioc(http: HttpClient, ip: str) -> Dict[str, Any]:
+    try:
+        return socradar_ioc_detail(http, ip)
+    except SourceError as exc:
+        if "404" in str(exc):
+            return {}
+        raise
 
 
 def _virustotal(http: HttpClient, ip: str, key: str) -> Dict[str, Any]:
@@ -218,6 +230,7 @@ def lookup_ip(ip: str, timeout: float = 20.0) -> Dict[str, Any]:
         "otx": lambda: _otx(
             http, ip_text, "IPv6" if address.version == 6 else "IPv4"
         ),
+        "socradar_ioc": lambda: _socradar_ioc(http, ip_text),
     }
     tb_key = get_api_key("threatbook")
     vt_key = get_api_key("virustotal")
@@ -243,6 +256,7 @@ def lookup_ip(ip: str, timeout: float = 20.0) -> Dict[str, Any]:
     otx = _parse_otx(raw["otx"]) if raw.get("otx") else {}
     tb = _parse_threatbook(raw["threatbook"]) if raw.get("threatbook") else {}
     vt = _parse_vt(raw["virustotal"]) if raw.get("virustotal") else {}
+    soc = parse_socradar_ioc(raw["socradar_ioc"]) if raw.get("socradar_ioc") else {}
 
     connection = ipwho.get("connection") or {}
     loc = ipinfo.get("loc") or ""
@@ -253,21 +267,23 @@ def lookup_ip(ip: str, timeout: float = 20.0) -> Dict[str, Any]:
         except ValueError:
             lat = lon = None
 
+    soc_geo = soc.get("geo") or {}
     report["geo"] = {
-        "country": _first(ipwho.get("country"), ipinfo.get("country"), ipapi.get("country"), otx.get("country"), vt.get("country")) or "",
-        "country_code": _first(ipwho.get("country_code"), ipinfo.get("country"), "") or "",
-        "region": _first(ipwho.get("region"), ipinfo.get("region"), ipapi.get("regionName")) or "",
-        "city": _first(ipwho.get("city"), ipinfo.get("city"), ipapi.get("city"), otx.get("city")) or "",
+        "country": _first(ipwho.get("country"), ipinfo.get("country"), ipapi.get("country"), otx.get("country"), soc_geo.get("country"), vt.get("country")) or "",
+        "country_code": _first(ipwho.get("country_code"), ipinfo.get("country"), soc_geo.get("country_code"), "") or "",
+        "region": _first(ipwho.get("region"), ipinfo.get("region"), ipapi.get("regionName"), soc_geo.get("region")) or "",
+        "city": _first(ipwho.get("city"), ipinfo.get("city"), ipapi.get("city"), otx.get("city"), soc_geo.get("city")) or "",
         "postal": _first(ipwho.get("postal"), ipinfo.get("postal")) or "",
         "timezone": _first(ipwho.get("timezone", {}).get("id") if isinstance(ipwho.get("timezone"), dict) else None, ipinfo.get("timezone"), ipapi.get("timezone")) or "",
-        "latitude": _first(ipwho.get("latitude"), lat, ipapi.get("lat")),
-        "longitude": _first(ipwho.get("longitude"), lon, ipapi.get("lon")),
+        "latitude": _first(ipwho.get("latitude"), lat, ipapi.get("lat"), soc_geo.get("lat")),
+        "longitude": _first(ipwho.get("longitude"), lon, ipapi.get("lon"), soc_geo.get("lon")),
         "hostname": _first(ipinfo.get("hostname"), ipapi.get("reverse")) or "",
     }
     asn = _first(
         connection.get("asn") if isinstance(connection, dict) else None,
         otx.get("asn"),
         ipapi.get("as"),
+        soc_geo.get("asn"),
         vt.get("asn"),
     )
     if asn is not None and str(asn).strip().isdigit():
@@ -277,6 +293,7 @@ def lookup_ip(ip: str, timeout: float = 20.0) -> Dict[str, Any]:
         connection.get("org") if isinstance(connection, dict) else None,
         ipinfo.get("org"),
         ipapi.get("org"),
+        soc_geo.get("org"),
         vt.get("as_owner"),
     ) or ""
     report["isp"] = _first(
@@ -284,19 +301,31 @@ def lookup_ip(ip: str, timeout: float = 20.0) -> Dict[str, Any]:
         ipapi.get("isp"),
         tb.get("carrier"),
     ) or ""
+    soc_flags = soc.get("flags") or {}
     report["flags"] = {
-        "proxy": ipapi.get("proxy"),
-        "hosting": ipapi.get("hosting"),
+        "proxy": ipapi.get("proxy") or soc_flags.get("is_proxy"),
+        "hosting": ipapi.get("hosting") or soc_flags.get("is_hosting"),
         "mobile": ipapi.get("mobile"),
+        "tor": soc_flags.get("is_tor"),
+        "vpn": soc_flags.get("is_vpn"),
+        "scanner": soc_flags.get("is_scanner"),
+        "botnet": soc_flags.get("is_botnet"),
+        "whitelisted": soc_flags.get("is_whitelisted"),
     }
     report["threatbook"] = tb
     report["virustotal"] = vt
     report["otx"] = otx
-    report["reputation"] = _risk(tb, vt, otx)
+    report["socradar_ioc"] = soc
+    report["reputation"] = _risk(tb, vt, otx, soc)
     return report
 
 
-def _risk(tb: Dict[str, Any], vt: Dict[str, Any], otx: Dict[str, Any]) -> Dict[str, Any]:
+def _risk(
+    tb: Dict[str, Any],
+    vt: Dict[str, Any],
+    otx: Dict[str, Any],
+    soc: Dict[str, Any],
+) -> Dict[str, Any]:
     reasons: List[str] = []
     level = "unknown"
     validations = otx.get("validation") or []
@@ -328,6 +357,12 @@ def _risk(tb: Dict[str, Any], vt: Dict[str, Any], otx: Dict[str, Any]) -> Dict[s
         if level == "unknown":
             level = "suspicious"
         reasons.append(f"OTX pulses: {otx['pulse_count']}")
+    if soc:
+        soc_risk = socradar_ioc_risk(soc)
+        if soc_risk.get("risk") in ("malicious", "suspicious"):
+            if soc_risk["risk"] == "malicious" or level == "unknown":
+                level = soc_risk["risk"]
+            reasons.extend(soc_risk.get("reasons") or [])
     if whitelisted:
         reasons.append("OTX 白名单/误报标记")
         if level in ("malicious", "suspicious") and malicious < 3 and not tb_malicious:

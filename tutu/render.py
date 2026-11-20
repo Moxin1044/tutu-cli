@@ -228,9 +228,10 @@ def print_sources(
             )
         console.print()
     console.print(
-        "[dim]默认漏洞源: nvd, kev, mitre, osv, vulnrichment, sploitus\n"
-        "默认情报源: nsfocus, 360, threatbook, loudong, ransomware_live, "
-        "ransomlook, socradar, ransomwatch[/dim]"
+        "[dim]默认漏洞源: nvd, kev, mitre, osv, vulnrichment, vulnx, "
+        "socradar_cve, exploitdb, sploitus, redhat\n"
+        "默认情报源: nsfocus, 360, threatbook, loudong, socradar_ioc, "
+        "ransomware_live, ransomlook, socradar, ransomwatch[/dim]"
     )
 
 
@@ -293,6 +294,10 @@ def print_ip_report(console: Console, report: dict) -> None:
                 ("代理", report.get("flags", {}).get("proxy")),
                 ("托管/IDC", report.get("flags", {}).get("hosting")),
                 ("移动网络", report.get("flags", {}).get("mobile")),
+                ("Tor", report.get("flags", {}).get("tor")),
+                ("VPN", report.get("flags", {}).get("vpn")),
+                ("扫描器", report.get("flags", {}).get("scanner")),
+                ("僵尸网络", report.get("flags", {}).get("botnet")),
             ],
         )
     )
@@ -300,6 +305,22 @@ def print_ip_report(console: Console, report: dict) -> None:
     tb = report.get("threatbook") or {}
     vt = report.get("virustotal") or {}
     otx = report.get("otx") or {}
+    soc = report.get("socradar_ioc") or {}
+    soc_text = ""
+    if soc:
+        soc_text = " · ".join(
+            str(x)
+            for x in (
+                f"{soc.get('type')} {soc.get('value')}",
+                f"confidence={soc.get('confidence')}",
+                "categories=" + ",".join(soc.get("categories") or []) if soc.get("categories") else "",
+                "flags=" + ",".join(
+                    key for key, value in (soc.get("flags") or {}).items() if value
+                ) if soc.get("flags") else "",
+                f"reports={soc.get('linked_reports')}",
+            )
+            if x
+        )
     rep_rows = [
         ("综合判定", " · ".join(rep.get("reasons") or [])),
         ("ThreatBook", " · ".join(
@@ -320,6 +341,7 @@ def print_ip_report(console: Console, report: dict) -> None:
         ("OTX pulses", otx.get("pulse_count")),
         ("OTX 标签", " · ".join(otx.get("tags") or [])),
         ("OTX 校验", " · ".join(otx.get("validation") or [])),
+        ("SOCRadar IOC", soc_text or "未命中/无记录"),
     ]
     console.print(_kv_table("威胁情报", rep_rows))
     if report.get("errors"):
@@ -370,6 +392,7 @@ def print_hash_report(console: Console, report: dict) -> None:
     vt = report.get("virustotal") or {}
     circl = report.get("circl") or {}
     otx = report.get("otx") or {}
+    soc = report.get("socradar_ioc") or {}
     console.print(
         _kv_table(
             "检测结果",
@@ -381,6 +404,20 @@ def print_hash_report(console: Console, report: dict) -> None:
                 ("CIRCL", f"{circl.get('file_name', '')} {circl.get('known_malicious', '')}".strip() if circl else "未命中"),
                 ("OTX pulses", otx.get("pulse_count")),
                 ("OTX 标签", " · ".join(otx.get("tags") or [])),
+                (
+                    "SOCRadar IOC",
+                    " · ".join(
+                        str(x)
+                        for x in (
+                            soc.get("type"),
+                            f"confidence={soc.get('confidence')}" if soc else "",
+                            "categories=" + ",".join(soc.get("categories") or []) if soc and soc.get("categories") else "",
+                            f"reports={soc.get('linked_reports')}" if soc else "",
+                        )
+                        if x
+                    )
+                    or "未命中/无记录",
+                ),
                 ("链接", tb.get("permalink")),
             ],
         )

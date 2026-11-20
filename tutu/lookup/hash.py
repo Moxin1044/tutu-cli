@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional
 from ..config import get_api_key
 from ..http import HttpClient, SourceError
 from ..utils import clean_text
+from .socradar import ioc_detail as socradar_ioc_detail
+from .socradar import ioc_risk as socradar_ioc_risk
+from .socradar import parse_ioc as parse_socradar_ioc
 
 CIRCL = "https://hashlookup.circl.lu/lookup/{kind}/{value}"
 OTX = "https://otx.alienvault.com/api/v1/indicators/file/{value}/general"
@@ -65,6 +68,15 @@ def _threatbook_multi(http: HttpClient, value: str, key: str) -> Dict[str, Any]:
     if data.get("response_code") not in (0, "0"):
         raise SourceError(clean_text(data.get("verbose_msg") or "ThreatBook 多引擎查询失败"))
     return (data.get("data") or {}).get("multiengines") or {}
+
+
+def _socradar_ioc(http: HttpClient, value: str) -> Dict[str, Any]:
+    try:
+        return socradar_ioc_detail(http, value)
+    except SourceError as exc:
+        if "404" in str(exc):
+            return {}
+        raise
 
 
 def _virustotal(http: HttpClient, value: str, key: str) -> Dict[str, Any]:
@@ -209,6 +221,7 @@ def _risk(
     vt: Dict[str, Any],
     circl: Dict[str, Any],
     otx: Dict[str, Any],
+    soc: Dict[str, Any],
 ) -> Dict[str, Any]:
     reasons: List[str] = []
     level = "unknown"
@@ -234,6 +247,12 @@ def _risk(
         if level == "unknown":
             level = "suspicious"
         reasons.append(f"OTX pulses: {otx['pulse_count']}")
+    if soc:
+        soc_risk = socradar_ioc_risk(soc)
+        if soc_risk.get("risk") in ("malicious", "suspicious"):
+            if soc_risk["risk"] == "malicious" or level == "unknown":
+                level = soc_risk["risk"]
+            reasons.extend(soc_risk.get("reasons") or [])
     if not reasons:
         reasons.append("公开源未发现明显恶意标记")
     return {"risk": level, "reasons": reasons}
@@ -249,6 +268,7 @@ def lookup_hash(value: str, timeout: float = 25.0) -> Dict[str, Any]:
     tasks = {
         "circl": lambda: _circl(http, kind, value),
         "otx": lambda: _otx(http, value),
+        "socradar_ioc": lambda: _socradar_ioc(http, value),
     }
     tb_key = get_api_key("threatbook")
     vt_key = get_api_key("virustotal")
@@ -287,12 +307,14 @@ def lookup_hash(value: str, timeout: float = 25.0) -> Dict[str, Any]:
         else {}
     )
     vt = _parse_virustotal(raw["virustotal"]) if raw.get("virustotal") else {}
+    soc = parse_socradar_ioc(raw["socradar_ioc"]) if raw.get("socradar_ioc") else {}
 
     report["circl"] = circl
     report["otx"] = otx
     report["threatbook"] = tb
     report["threatbook_multi"] = tb_multi
     report["virustotal"] = vt
+    report["socradar_ioc"] = soc
     report["file"] = {
         "name": _first(tb.get("file_name"), vt.get("meaningful_name"), circl.get("file_name")) or "",
         "size": _first(tb.get("file_size"), vt.get("size"), circl.get("file_size")),
@@ -325,5 +347,5 @@ def lookup_hash(value: str, timeout: float = 25.0) -> Dict[str, Any]:
         or ""
         for key in ("md5", "sha1", "sha256")
     }
-    report["reputation"] = _risk(tb, tb_multi, vt, circl, otx)
+    report["reputation"] = _risk(tb, tb_multi, vt, circl, otx, soc)
     return report

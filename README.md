@@ -27,6 +27,10 @@ tutu -t lockbit --limit 10
   - MITRE CVE / CVE.org（官方 CVE Record）
   - OSV.dev（开源生态漏洞）
   - CISA Vulnrichment（CISA ADP 富化数据）
+  - ProjectDiscovery vulnx（CVE / Nuclei 模板 / POC / KEV）
+  - SOCRadar CVE（CVE 详情 / Exploit-DB / SSVC）
+  - Exploit-DB（官方 Git 仓库 CSV）
+  - Red Hat Security Data（受影响产品 / 厂商 CVSS）
   - Sploitus（公开 Exploit / PoC 搜索）
   - FIRST EPSS 自动富化
   - 按 CVE 合并、去重、按 KEV / 严重性 / EPSS / 时间排序
@@ -35,14 +39,15 @@ tutu -t lockbit --limit 10
   - 360 威胁情报：公开安全通告（站内检索受限时给出入口）
   - 微步在线 X：自动过公开反爬挑战，未登录时给出站内检索入口
   - loudong.org.cn：HTML 爬虫，支持 `--deep` 翻页
+  - SOCRadar IOC：恶意 IP / 域名 / URL / 哈希指标
   - ransomware.live：公开 API v2
   - RansomLook：公开 API
   - SOCRadar Ransomware：公开 Web API
   - Ransomwatch：GitHub 公开 JSON
 - **IP / 哈希 / 文件 `-ip` `-hash` `-file`**
   - IP 信誉、地理位置、ASN/组织、代理/IDC 标记
-  - IP 情报：ThreatBook、VirusTotal、AlienVault OTX
-  - 哈希情报：CIRCL Hashlookup、OTX、ThreatBook、VirusTotal
+  - IP 情报：SOCRadar IOC、ThreatBook、VirusTotal、AlienVault OTX
+  - 哈希情报：SOCRadar IOC、CIRCL Hashlookup、OTX、ThreatBook、VirusTotal
   - 文件本地哈希（MD5/SHA1/SHA256/SHA512）、类型识别
   - VirusTotal / 微步沙箱上传与多引擎结果
 - **本地配置 `-config`**
@@ -220,16 +225,21 @@ tutu -file sample.exe --no-upload
 漏洞：
 
 ```text
-nvd  kev  mitre  osv  vulnrichment  sploitus  github
+nvd  kev  mitre  osv  vulnrichment  vulnx  socradar_cve
+exploitdb  sploitus  redhat  github
 ```
 
 情报：
 
 ```text
-nsfocus  360  threatbook  loudong  ransomware_live  ransomlook  socradar  ransomwatch
+nsfocus  360  threatbook  loudong  socradar_ioc
+ransomware_live  ransomlook  socradar  ransomwatch
 ```
 
-`github` 默认关闭：GitHub Advisory API 未认证时只有 60 次/小时。若已有 `GITHUB_TOKEN`，工具会自动读取该环境变量；不配置也能运行，只是可能被限流。
+- `github` 默认关闭：GitHub Advisory API 未认证时只有 60 次/小时。若已有 `GITHUB_TOKEN`，工具会自动读取该环境变量。
+- `vulnx` 无需 Key；如果设置了 `PDCP_API_KEY` / `TUTU_PDCP_API_KEY`，会自动使用 ProjectDiscovery 的更高配额。
+- `exploitdb` 首次查询会下载官方 CSV（约 10MB），之后缓存 24 小时。
+- `socradar_cve` / `socradar_ioc` 使用公开 Web API，可能需要通过 Cloudflare 的正常浏览器 Cookie；失败不会影响其他源。
 
 ---
 
@@ -268,11 +278,16 @@ tutu  ·  漏洞与威胁情报聚合搜索
 | MITRE CVE | 漏洞 | 否 | 仅支持完整 CVE 详情 |
 | OSV.dev | 漏洞 | 否 | 仅支持完整 CVE 详情 |
 | CISA Vulnrichment | 漏洞 | 否 | GitHub raw JSON；未富化的 CVE 会跳过 |
+| ProjectDiscovery vulnx | 漏洞 | 否 | 公开 API；可选用 `PDCP_API_KEY` 提升配额 |
+| SOCRadar CVE | 漏洞 | 否 | 公开 Web API；可能触发 Cloudflare 挑战 |
+| Exploit-DB | Exploit | 否 | 官方 Git 仓库 CSV，约 10MB，缓存 24 小时 |
+| Red Hat Security Data | 漏洞 | 否 | 仅支持完整 CVE 详情 |
 | Sploitus | Exploit | 否 | 公开 POST 搜索接口 |
 | 绿盟 NTI | 情报 | 否 | 公开 API，返回 APT / 活动 / 新闻 / 通告 |
 | 360 威胁情报 | 情报 | 否 | 公开内容 API 只返回最新通告；站内检索被云防护拦截 |
 | 微步在线 X | 情报 | 否（完整检索需登录） | 自动过公开反爬挑战；未登录只开放推荐位 |
 | loudong.org.cn | 情报 | 否 | HTML 爬虫；搜索接口经常为空，高频请求会 403 |
+| SOCRadar IOC | 情报 | 否 | 公开 Web API；可能触发 Cloudflare 挑战 |
 | ransomware.live | 勒索情报 | 否 | 免费 API v2；每个端点约 1 次/分钟，结果缓存 10 分钟 |
 | RansomLook | 勒索情报 | 否 | 公开 API |
 | SOCRadar Ransomware | 勒索情报 | 否 | 公开 Web API；可能触发 Cloudflare 人机挑战 |
@@ -287,6 +302,10 @@ tutu  ·  漏洞与威胁情报聚合搜索
 | MITRE | `cveawg.mitre.org/api/cve/{id}` | CVE Record |
 | OSV | `api.osv.dev/v1/vulns/{id}` | 开源漏洞 |
 | FIRST | `api.first.org/data/v1/epss` | EPSS 富化 |
+| ProjectDiscovery vulnx | `api.projectdiscovery.io/v2/vulnerability/...` | CVE / POC / Nuclei / KEV |
+| SOCRadar CVE | `cve.socradar.io/api/cves/{id}`、`/api/catalog/cves` | CVE 详情 / 目录检索 |
+| Exploit-DB | `gitlab.com/exploit-database/exploitdb/-/raw/main/files_exploits.csv` | Exploit 元数据 |
+| Red Hat | `access.redhat.com/hydra/rest/securitydata/cve/{id}.json` | 厂商影响 / CVSS |
 | Sploitus | `POST sploitus.com/search` | Exploit / PoC |
 | 绿盟 NTI | `/api/v2/apt/objects/`、`/campaign/`、`/news/`、`/report/notie/` | APT / 活动 / 新闻 / 通告 |
 | 360 TI | `/api/custom/sc/v3/researches` | 公开安全通告 |
@@ -300,6 +319,7 @@ tutu  ·  漏洞与威胁情报聚合搜索
 | ipinfo.io | `/{ip}/json` | IP 归属 / 主机名 |
 | ip-api.com | `/json/{ip}` | IP 归属 / 代理标记 |
 | AlienVault OTX | `/api/v1/indicators/IPv4/{ip}/general`、`/file/{hash}/general` | IP / 哈希情报（免 Key） |
+| SOCRadar IOC | `ioc.socradar.io/api/v1/iocs/{value}`、`/api/v1/iocs?q=` | IP / 哈希 / IOC |
 | CIRCL | `hashlookup.circl.lu/lookup/{kind}/{hash}` | 哈希文件情报（免 Key） |
 | 微步 API | `/v3/scene/ip_reputation`、`/v3/file/report`、`/v3/file/report/multiengines` | IP / 哈希（需 Key） |
 | 微步沙箱 | `POST /v3/file/upload` | 文件沙箱（需 Key） |

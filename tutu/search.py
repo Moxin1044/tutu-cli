@@ -93,6 +93,9 @@ def merge_vulnerabilities(
                 cves = extract_cves(
                     " ".join([item.title, item.summary] + list(item.tags))
                 )
+                extra_cve = (item.extra or {}).get("cve")
+                if not cves and extra_cve:
+                    cves = [str(extra_cve).upper()]
                 if cves:
                     for cve in cves:
                         card_for(cve).exploits.append(item)

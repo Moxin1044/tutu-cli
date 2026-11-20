@@ -7,6 +7,9 @@ from tutu.cli import build_parser
 from tutu.config import masked
 from tutu.lookup.file import local_file_info
 from tutu.lookup.hash import hash_kind
+from tutu.lookup.socradar import ioc_risk, parse_ioc
+from tutu.sources.exploitdb import _match as edb_match
+from tutu.sources.vulnx import parse_row as vulnx_parse_row
 from tutu.models import Item, SourceResult
 from tutu.search import merge_vulnerabilities, sort_cards
 from tutu.sources.loudong import _card_items
@@ -41,6 +44,57 @@ def test_cli_new_modes_parse():
     args = build_parser().parse_args(["config", "set", "threatbook", "x"])
     assert args.query == "config"
     assert args.extra == ["set", "threatbook", "x"]
+
+
+def test_vulnx_parse_row():
+    item = vulnx_parse_row(
+        {
+            "cve_id": "CVE-2021-44228",
+            "name": "Log4j RCE",
+            "description": "demo",
+            "severity": "critical",
+            "cvss_score": 10,
+            "is_kev": True,
+            "is_poc": True,
+            "tags": ["rce"],
+            "cwe": ["CWE-502"],
+            "pocs": [{"url": "https://example.com/poc"}],
+        }
+    )
+    assert item is not None
+    assert item.title == "CVE-2021-44228"
+    assert item.severity == "CRITICAL"
+    assert item.extra["kev"] is True
+    assert item.extra["references"] == ["https://example.com/poc"]
+
+
+def test_exploitdb_exact_match():
+    row = {
+        "description": "Apache Log4j RCE",
+        "codes": "CVE-2021-44228;OSVDB-1",
+        "platform": "java",
+        "type": "remote",
+    }
+    assert edb_match(row, "CVE-2021-44228", True)
+    assert edb_match(row, "log4j", False)
+    assert not edb_match(row, "CVE-2020-0001", True)
+
+
+def test_socradar_ioc_risk():
+    parsed = parse_ioc(
+        {
+            "value": "1.2.3.4",
+            "type": "ip",
+            "categories": ["c2", "malware"],
+            "confidence": 0.9,
+            "is_tor": True,
+            "malware_families": ["Cobalt Strike"],
+            "linked_report_count": 4,
+        }
+    )
+    risk = ioc_risk(parsed)
+    assert risk["risk"] in ("malicious", "suspicious")
+    assert any("Cobalt" in reason for reason in risk["reasons"])
 
 
 def test_threatbook_challenge_solver():

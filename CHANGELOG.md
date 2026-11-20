@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.2.0 — 2026-11-21
+
+### 新增漏洞源
+
+- ProjectDiscovery vulnx：CVE、POC、Nuclei 模板、KEV、EPSS
+- SOCRadar CVE：CVE 详情、Exploit-DB、SSVC、PoC
+- Exploit-DB：官方 Git 仓库 CSV，按 CVE / 关键词检索
+- Red Hat Security Data：厂商 CVSS、受影响产品
+
+### 新增情报源
+
+- SOCRadar IOC：恶意 IP / 域名 / URL / 哈希指标
+
+### IP / 哈希增强
+
+- `-ip` 增加 SOCRadar IOC 情报
+- `-hash` 增加 SOCRadar IOC 情报
+- 支持 IP 的 Tor / VPN / Proxy / Scanner / Botnet 标记和关联报告
+- `-t` 支持直接检索 SOCRadar IOC
+
+### 其他
+
+- 发行名改为 `tutu-cli`，安装后命令仍为 `tutu`
+- 新增 `PDCP_API_KEY` / `TUTU_PDCP_API_KEY` 支持（可选）
+- README / 发布说明更新
+
 ## 0.1.0 — 2026-11-21
 
 首个公开版本。

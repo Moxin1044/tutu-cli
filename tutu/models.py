@@ -59,6 +59,7 @@ class VulnCard:
     modified: str = ""
     sources: List[str] = field(default_factory=list)
     tags: List[str] = field(default_factory=list)
+    affected_products: List[str] = field(default_factory=list)
     refs: List[str] = field(default_factory=list)
     kev: bool = False
     ransomware: bool = False
@@ -77,6 +78,7 @@ class VulnCard:
             "modified": self.modified,
             "sources": self.sources,
             "tags": self.tags,
+            "affected_products": self.affected_products,
             "refs": self.refs,
             "kev": self.kev,
             "ransomware": self.ransomware,

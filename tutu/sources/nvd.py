@@ -63,7 +63,10 @@ def _products(cve: Dict[str, Any], limit: int = 6) -> List[str]:
                 parts = criteria.split(":")
                 if len(parts) > 4:
                     vendor, product = parts[3], parts[4]
+                    version = parts[5] if len(parts) > 5 else ""
                     label = f"{vendor}/{product}"
+                    if version and version not in ("*", "-", ""):
+                        label += f" {version}"
                     if label not in out:
                         out.append(label)
                 if len(out) >= limit:
@@ -106,7 +109,7 @@ class NvdSource(Source):
                 for r in (cve.get("references") or [])
                 if isinstance(r, dict) and r.get("url")
             ][:5]
-            tags = _cwe(cve) + _products(cve)
+            tags = _cwe(cve)
             items.append(
                 Item(
                     source=self.name,
@@ -127,6 +130,7 @@ class NvdSource(Source):
                         "cvss_version": metric.get("version") or "",
                         "references": refs,
                         "description": desc,
+                        "products": _products(cve),
                         "total_results": data.get("totalResults"),
                     },
                 )

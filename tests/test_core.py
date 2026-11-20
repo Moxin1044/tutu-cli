@@ -165,7 +165,11 @@ def test_merge_vulnerabilities():
                 score="8.1",
                 date="2026-01-01",
                 summary="NVD summary",
-                extra={"cve": "CVE-2026-0001", "description": "A demo bug"},
+                extra={
+                    "cve": "CVE-2026-0001",
+                    "description": "A demo bug",
+                    "products": ["demo/product 1.0"],
+                },
             )
         ],
     )
@@ -184,6 +188,7 @@ def test_merge_vulnerabilities():
                     "kev": True,
                     "ransomware": True,
                     "references": ["https://example.com/advisory"],
+                    "products": ["Demo/Product"],
                 },
             )
         ],
@@ -212,6 +217,8 @@ def test_merge_vulnerabilities():
     assert len(card.exploits) == 1
     assert "NVD" in card.sources and "CISA KEV" in card.sources
     assert card.refs == ["https://example.com/advisory"]
+    assert "demo/product 1.0" in card.affected_products
+    assert "Demo/Product" in card.affected_products
 
 
 def test_sort_cards_prefers_kev():

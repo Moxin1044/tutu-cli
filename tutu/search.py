@@ -150,6 +150,10 @@ def merge_vulnerabilities(
                 card.ransomware = card.ransomware or bool(
                     (item.extra or {}).get("ransomware")
                 )
+            for product in (item.extra or {}).get("products") or []:
+                product = str(product).strip()
+                if product and product not in card.affected_products:
+                    card.affected_products.append(product)
             for tag in item.tags:
                 tag = str(tag).strip()
                 if tag and tag not in card.tags:
@@ -163,6 +167,7 @@ def merge_vulnerabilities(
 
     for card in cards.values():
         card.tags = card.tags[:10]
+        card.affected_products = card.affected_products[:12]
         card.refs = card.refs[:8]
         deduped: List[Item] = []
         seen_urls = set()

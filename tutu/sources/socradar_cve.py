@@ -59,7 +59,7 @@ class SocradarCveSource(Source):
                 summary=truncate(parsed["summary"] or parsed["title"], 700),
                 severity=normalize_severity(parsed["severity"]),
                 score=str(parsed["cvss"] or ""),
-                tags=(parsed["cwes"] + parsed["products"])[:10],
+                tags=parsed["cwes"][:10],
                 extra={
                     "cve": cve_id,
                     "description": parsed["summary"] or parsed["title"],
@@ -69,6 +69,7 @@ class SocradarCveSource(Source):
                     "kev": parsed["kev"],
                     "ransomware": parsed["ransomware"],
                     "references": parsed["references"],
+                    "products": parsed["products"],
                     "exploits": exploits,
                     "poc_count": parsed["poc_count"],
                     "repo_total": parsed["repo_total"],
@@ -116,6 +117,7 @@ class SocradarCveSource(Source):
                         "kev": bool(row.get("kev")),
                         "published": row.get("published_at") or "",
                         "poc_sources": row.get("poc_sources") or [],
+                        "products": row.get("vendors") or [],
                         "total_results": data.get("total"),
                     },
                 )

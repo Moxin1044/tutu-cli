@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 — 2026-11-21
+
+- 漏洞卡片新增 🎯 Affected Products
+- 聚合 NVD CPE、SOCRadar、vulnx、Red Hat、OSV、MITRE、KEV、GitHub Advisory 的受影响产品
+- JSON 输出新增 `affected_products` 字段
+
 ## 0.2.1 — 2026-11-21
 
 - 修复 `--json` 输出中 SOCRadar CVE 嵌套 Exploit 条目无法序列化的问题

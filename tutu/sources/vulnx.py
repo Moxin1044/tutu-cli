@@ -79,7 +79,7 @@ def parse_row(row: Dict[str, Any]) -> Optional[Item]:
         summary=truncate(desc or name, 700),
         severity=normalize_severity(row.get("severity") or ""),
         score=str(row.get("cvss_score") or ""),
-        tags=_tags(row) + _products(row),
+        tags=_tags(row),
         extra={
             "cve": cve_id.upper(),
             "description": desc or name,
@@ -89,6 +89,7 @@ def parse_row(row: Dict[str, Any]) -> Optional[Item]:
             "epss_percentile": row.get("epss_percentile"),
             "kev": kev,
             "references": _references(row),
+            "products": _products(row),
             "poc_count": row.get("poc_count"),
             "ntps": row.get("ntps"),
             "is_remote": row.get("is_remote"),

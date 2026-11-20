@@ -35,6 +35,14 @@ class GithubAdvisorySource(Source):
             if not cve_id:
                 continue
             tags = [t for t in (row.get("cwes") or []) if t]
+            products = []
+            for vuln in row.get("vulnerabilities") or []:
+                package = (vuln or {}).get("package") or {}
+                name = clean_text(package.get("name") or "")
+                ecosystem = clean_text(package.get("ecosystem") or "")
+                label = f"{ecosystem}/{name}" if ecosystem else name
+                if label and label not in products:
+                    products.append(label)
             items.append(
                 Item(
                     source=self.name,
@@ -51,6 +59,7 @@ class GithubAdvisorySource(Source):
                         "ghsa": row.get("ghsa_id") or "",
                         "modified": row.get("updated_at") or "",
                         "references": row.get("references") or [],
+                        "products": products[:8],
                     },
                 )
             )

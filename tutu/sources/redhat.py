@@ -44,7 +44,7 @@ class RedHatSource(Source):
             )
             if label and label not in affected:
                 affected.append(label)
-        tags = affected[:6]
+        tags: List[str] = []
         for row in data.get("package_state") or []:
             if isinstance(row, dict):
                 product = clean_text(row.get("product_name") or "")
@@ -75,6 +75,7 @@ class RedHatSource(Source):
                     "modified": data.get("last_modified_date") or "",
                     "vector": cvss3.get("cvss3_scoring_vector") or "",
                     "references": refs[:8],
+                    "products": affected,
                     "statement": clean_text(data.get("statement") or ""),
                     "upstream": data.get("upstream") or [],
                 },

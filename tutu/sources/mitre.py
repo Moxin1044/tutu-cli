@@ -81,7 +81,8 @@ class MitreCveSource(Source):
             for r in (cna.get("references") or [])
             if isinstance(r, dict) and r.get("url")
         ][:5]
-        tags = _affected(cna)
+        products = _affected(cna)
+        tags: List[str] = []
         for problem in cna.get("problemTypes") or []:
             for row in problem.get("descriptions") or []:
                 cwe = row.get("cweId")
@@ -107,6 +108,7 @@ class MitreCveSource(Source):
                     "vector": metric.get("vector") or "",
                     "references": refs,
                     "description": desc,
+                    "products": products,
                 },
             )
         ]

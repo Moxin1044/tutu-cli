@@ -59,7 +59,7 @@ class OsvSource(Source):
         detail = clean_text(data.get("details", ""))
         summary = first_sentence(data.get("summary") or detail, 500)
         sev = _severity(data.get("severity") or [])
-        tags = _packages(data.get("affected") or [])
+        products = _packages(data.get("affected") or [])
         aliases = [a for a in (data.get("aliases") or []) if a and a != cve_id]
         refs = [
             r.get("url")
@@ -76,7 +76,7 @@ class OsvSource(Source):
                 summary=summary,
                 severity=normalize_severity(sev.get("severity") or ""),
                 score="",
-                tags=tags + aliases[:3],
+                tags=aliases[:3],
                 extra={
                     "cve": cve_id,
                     "osv_id": data.get("id") or cve_id,
@@ -85,6 +85,7 @@ class OsvSource(Source):
                     "vector": sev.get("vector") or "",
                     "references": refs,
                     "description": detail,
+                    "products": products,
                 },
             )
         ]

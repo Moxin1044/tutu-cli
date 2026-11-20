@@ -34,6 +34,7 @@ tutu -t lockbit --limit 10
   - Sploitus（公开 Exploit / PoC 搜索）
   - FIRST EPSS 自动富化
   - 按 CVE 合并、去重、按 KEV / 严重性 / EPSS / 时间排序
+  - 卡片展示 🎯 Affected Products（NVD CPE / SOCRadar / vulnx / Red Hat / OSV 等）
 - **威胁情报 `-t`**
   - 绿盟 NTI：APT 组织、攻击活动、威胁新闻、漏洞通告
   - 360 威胁情报：公开安全通告（站内检索受限时给出入口）
@@ -262,7 +263,7 @@ tutu  ·  漏洞与威胁情报聚合搜索
 
 `--json` 输出包含：
 
-- `vulnerabilities`：合并后的漏洞卡片（含 KEV、EPSS、Exploit 列表）
+- `vulnerabilities`：合并后的漏洞卡片（含 KEV、EPSS、`affected_products`、Exploit 列表）
 - `exploits`：未关联到 CVE 的 Exploit/PoC
 - `threat_intel`：按来源分组的情报结果
 - `sources`：漏洞源状态（条数、耗时、错误、备注）

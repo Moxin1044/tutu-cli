@@ -84,6 +84,9 @@ def _card_panel(card: VulnCard, console: Console) -> Panel:
         body.append(card.modified, style="white")
     if card.epss_percentile:
         body.append(f"   EPSS 百分位: {card.epss_percentile * 100:.1f}%", style="dim")
+    if card.affected_products:
+        body.append("\n🎯 Affected Products: ", style="bold yellow")
+        body.append(" · ".join(card.affected_products[:10]), style="white")
     if card.tags:
         body.append("\n标签: ", style="dim")
         body.append(", ".join(card.tags[:10]), style="magenta")

@@ -57,12 +57,19 @@ class CisaKevSource(Source):
         items: List[Item] = []
         for record in matched:
             cve_id = (record.get("cveID") or "").upper()
-            tags = [
-                clean_text(record.get("vendorProject", "")),
-                clean_text(record.get("product", "")),
-            ]
+            tags = []
             if str(record.get("knownRansomwareCampaignUse", "")).lower() == "known":
                 tags.append("勒索软件利用")
+            products = [
+                "/".join(
+                    x
+                    for x in (
+                        clean_text(record.get("vendorProject", "")),
+                        clean_text(record.get("product", "")),
+                    )
+                    if x
+                )
+            ]
             items.append(
                 Item(
                     source=self.name,
@@ -86,6 +93,7 @@ class CisaKevSource(Source):
                         "kev": True,
                         "vendor": record.get("vendorProject") or "",
                         "product": record.get("product") or "",
+                        "products": [p for p in products if p],
                         "ransomware": str(
                             record.get("knownRansomwareCampaignUse", "")
                         ).lower()

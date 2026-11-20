@@ -15,7 +15,7 @@ tutu -t lockbit --limit 10
 
 它会并行查询多个公开数据源，把同一个 CVE 的 NVD、CISA KEV、MITRE、OSV、CISA Vulnrichment、Exploit/PoC 等结果合并成一张卡片；`-t` 则用于 APT 组织、攻击活动、威胁新闻、漏洞通告、勒索软件受害者/组织等情报。
 
-> 所有默认源均不需要账号、API Key 或 Token。部分站点存在反爬 / 登录限制，工具会尽量抓取公开数据，并在“数据源状态”中明确标注限制，不会静默失败。
+> 所有默认源均不需要账号、API Key 或 Token。部分站点存在访问或登录限制，工具会尽量使用公开数据，并在“数据源状态”中明确标注限制，不会静默失败。
 
 ---
 
@@ -38,7 +38,7 @@ tutu -t lockbit --limit 10
 - **威胁情报 `-t`**
   - 绿盟 NTI：APT 组织、攻击活动、威胁新闻、漏洞通告
   - 360 威胁情报：公开安全通告（站内检索受限时给出入口）
-  - 微步在线 X：自动过公开反爬挑战，未登录时给出站内检索入口
+  - 微步在线 X：公开接口 + 未登录检索入口
   - loudong.org.cn：HTML 爬虫，支持 `--deep` 翻页
   - SOCRadar IOC：恶意 IP / 域名 / URL / 哈希指标
   - ransomware.live：公开 API v2
@@ -240,7 +240,7 @@ ransomware_live  ransomlook  socradar  ransomwatch
 - `github` 默认关闭：GitHub Advisory API 未认证时只有 60 次/小时。若已有 `GITHUB_TOKEN`，工具会自动读取该环境变量。
 - `vulnx` 无需 Key；如果设置了 `PDCP_API_KEY` / `TUTU_PDCP_API_KEY`，会自动使用 ProjectDiscovery 的更高配额。
 - `exploitdb` 首次查询会下载官方 CSV（约 10MB），之后缓存 24 小时。
-- `socradar_cve` / `socradar_ioc` 使用公开 Web API，可能需要通过 Cloudflare 的正常浏览器 Cookie；失败不会影响其他源。
+- `socradar_cve` / `socradar_ioc` 使用公开 Web API，可能受站点访问策略影响；失败不会影响其他源。
 
 ---
 
@@ -280,18 +280,18 @@ tutu  ·  漏洞与威胁情报聚合搜索
 | OSV.dev | 漏洞 | 否 | 仅支持完整 CVE 详情 |
 | CISA Vulnrichment | 漏洞 | 否 | GitHub raw JSON；未富化的 CVE 会跳过 |
 | ProjectDiscovery vulnx | 漏洞 | 否 | 公开 API；可选用 `PDCP_API_KEY` 提升配额 |
-| SOCRadar CVE | 漏洞 | 否 | 公开 Web API；可能触发 Cloudflare 挑战 |
+| SOCRadar CVE | 漏洞 | 否 | 公开 Web API；可能受访问策略影响 |
 | Exploit-DB | Exploit | 否 | 官方 Git 仓库 CSV，约 10MB，缓存 24 小时 |
 | Red Hat Security Data | 漏洞 | 否 | 仅支持完整 CVE 详情 |
 | Sploitus | Exploit | 否 | 公开 POST 搜索接口 |
 | 绿盟 NTI | 情报 | 否 | 公开 API，返回 APT / 活动 / 新闻 / 通告 |
-| 360 威胁情报 | 情报 | 否 | 公开内容 API 只返回最新通告；站内检索被云防护拦截 |
-| 微步在线 X | 情报 | 否（完整检索需登录） | 自动过公开反爬挑战；未登录只开放推荐位 |
+| 360 威胁情报 | 情报 | 否 | 公开内容 API 只返回最新通告；站内检索受限 |
+| 微步在线 X | 情报 | 否（完整检索需登录） | 未登录时只开放公开推荐位 |
 | loudong.org.cn | 情报 | 否 | HTML 爬虫；搜索接口经常为空，高频请求会 403 |
-| SOCRadar IOC | 情报 | 否 | 公开 Web API；可能触发 Cloudflare 挑战 |
+| SOCRadar IOC | 情报 | 否 | 公开 Web API；可能受访问策略影响 |
 | ransomware.live | 勒索情报 | 否 | 免费 API v2；每个端点约 1 次/分钟，结果缓存 10 分钟 |
 | RansomLook | 勒索情报 | 否 | 公开 API |
-| SOCRadar Ransomware | 勒索情报 | 否 | 公开 Web API；可能触发 Cloudflare 人机挑战 |
+| SOCRadar Ransomware | 勒索情报 | 否 | 公开 Web API；可能受访问策略影响 |
 | Ransomwatch | 勒索情报 | 否 | GitHub 公开 JSON，本地缓存 12 小时 |
 
 ### 实际使用的公开接口 / 抓取路径
@@ -327,13 +327,6 @@ tutu  ·  漏洞与威胁情报聚合搜索
 | VirusTotal | `/api/v3/ip_addresses/{ip}`、`/files/{hash}`、`POST /files` | IP / 哈希 / 沙箱（需 Key） |
 
 > 这些接口均为站点前端实际调用的公开接口或公开 HTML 页面，可能随站点改版而变化；工具已对失败做降级处理，不会因单站改版而整体不可用。
-
-### 关于反爬
-
-- 微步在线 X 使用 `<script>Challenge=...` 类型的 JS 挑战。`tutu` 在 Python 中复刻了 `test(Challenge)` 的计算（包括 JS 中数字 + 字符串的隐式拼接），通过后再调用公开接口。
-- 360 的 `ti.360.cn` 搜索 API 对非浏览器请求返回云防护拦截页；工具改用公开内容 API，并在无匹配时生成浏览器检索入口。
-- SOCRadar 可能返回 Cloudflare `Just a moment...`。这属于站点策略，工具不会尝试绕过 Cloudflare 验证码，只会给出明确的失败原因。
-- 请遵守目标站点条款与当地法律，控制请求频率。
 
 ---
 

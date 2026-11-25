@@ -18,16 +18,21 @@ from .config import (
     set_key,
     show_config,
 )
+from .export import export_report
 from .http import SourceError
 from .lookup.file import analyze_file
 from .lookup.hash import lookup_hash
+from .lookup.icp import PROVIDERS as ICP_PROVIDERS
+from .lookup.icp import lookup_icp
 from .lookup.ip import lookup_ip
+from .lookup.reverse import PROVIDERS as REVERSE_PROVIDERS
 from .models import SourceResult
 from .render import (
     print_asset_report,
     print_error,
     print_file_report,
     print_hash_report,
+    print_icp_report,
     print_intel_results,
     print_ip_report,
     print_no_args,
@@ -98,7 +103,11 @@ def build_parser() -> argparse.ArgumentParser:
             "  tutu -hash 44d88612fea8a8f36de82e1278abb02f\n"
             "  tutu -file sample.exe --no-upload\n"
             "  tutu -asset example.com\n"
-            "  tutu -asset example.com --ports top100 --ip-intel\n"
+            "  tutu -asset example.com --ports top100 --ip-intel --reverse-ip\n"
+            "  tutu -asset example.com -o assets.xlsx\n"
+            "  tutu -ip 8.8.8.8 --reverse-limit 50\n"
+            "  tutu -icp example.com\n"
+            "  tutu -icp 豫ICP备16005160号\n"
             "  tutu -v CVE-2024-3400 --product nginx --check-version 1.18.0\n"
             "  tutu -config\n"
             "  tutu sources\n"
@@ -108,7 +117,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("extra", nargs="*", help=argparse.SUPPRESS)
     parser.add_argument("-v", "--vuln", metavar="QUERY", help="漏洞聚合搜索（CVE / 关键词）")
     parser.add_argument("-t", "--threat", metavar="QUERY", help="威胁情报搜索（APT / 勒索 / 关键词）")
-    parser.add_argument("-ip", "--ip", metavar="IP", help="IP 信誉 / 归属 / IOC 查询")
+    parser.add_argument("-ip", "--ip", metavar="IP", help="IP 信誉 / 归属 / IOC / 反查域名查询")
+    parser.add_argument(
+        "-icp",
+        "--icp",
+        metavar="QUERY",
+        help="ICP 备案查询：域名 / 备案号 / 主办单位名称",
+    )
+    parser.add_argument(
+        "--reverse-ip",
+        action="store_true",
+        help="资产模式：按解析到的每个公网 IP 反查关联域名",
+    )
+    parser.add_argument(
+        "--reverse-limit",
+        type=int,
+        default=100,
+        metavar="N",
+        help="反查域名时每个 IP 最多保留多少个域名（默认 100）",
+    )
+    parser.add_argument(
+        "--no-reverse",
+        action="store_true",
+        help="-ip 查询时跳过反查域名",
+    )
+    parser.add_argument(
+        "--no-icp",
+        action="store_true",
+        help="资产模式跳过 ICP 备案查询",
+    )
     parser.add_argument("-hash", "--hash", metavar="HASH", help="MD5 / SHA1 / SHA256 哈希情报查询")
     parser.add_argument("-file", "--file", metavar="PATH", help="文件哈希、公开情报查询与沙箱上传")
     parser.add_argument(
@@ -204,6 +241,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--json", action="store_true", help="输出 JSON")
     parser.add_argument(
+        "-o",
+        "--output",
+        metavar="PATH",
+        help="导出结果到 .json / .csv / .xlsx（可与终端输出同时使用）",
+    )
+    parser.add_argument(
+        "--export-format",
+        choices=("json", "csv", "xlsx"),
+        help="覆盖导出格式；默认根据输出文件扩展名判断",
+    )
+    parser.add_argument(
         "--deep",
         action="store_true",
         help="对支持翻页的站点（loudong）进行更深抓取",
@@ -212,6 +260,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--debug", action="store_true", help="输出调试日志")
     parser.add_argument("--version", action="version", version=f"tutu {__version__}")
     return parser
+
+
+def _build_search_payload(
+    vuln_query: Optional[str],
+    threat_query: Optional[str],
+    vuln_results: Sequence[SourceResult],
+    cards,
+    exploits,
+    intel_results: Sequence[SourceResult],
+    version_check: Optional[Dict] = None,
+) -> Dict:
+    payload = {
+        "version": __version__,
+        "query": {"vuln": vuln_query, "threat": threat_query},
+        "vulnerabilities": [card.to_dict() for card in cards],
+        "exploits": [item.to_dict() for item in exploits],
+        "threat_intel": [_result_dict(r) for r in intel_results],
+        "sources": [_result_dict(r) for r in vuln_results],
+    }
+    if version_check is not None:
+        payload["version_check"] = version_check
+    return payload
 
 
 def _json_output(
@@ -223,17 +293,38 @@ def _json_output(
     intel_results: Sequence[SourceResult],
     version_check: Optional[Dict] = None,
 ) -> str:
-    payload = {
-        "version": __version__,
-        "query": {"vuln": vuln_query, "threat": threat_query},
-        "vulnerabilities": [card.to_dict() for card in cards],
-        "exploits": [item.to_dict() for item in exploits],
-        "threat_intel": [_result_dict(r) for r in intel_results],
-        "sources": [_result_dict(r) for r in vuln_results],
-    }
-    if version_check is not None:
-        payload["version_check"] = version_check
-    return json.dumps(payload, ensure_ascii=False, indent=2)
+    return json.dumps(
+        _build_search_payload(
+            vuln_query,
+            threat_query,
+            vuln_results,
+            cards,
+            exploits,
+            intel_results,
+            version_check,
+        ),
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _export_result(kind: str, payload, args, console) -> bool:
+    if not args.output:
+        return True
+    try:
+        fmt = export_report(
+            kind,
+            payload,
+            args.output,
+            args.export_format,
+            version=__version__,
+        )
+    except (ValueError, OSError, RuntimeError) as exc:
+        print_error(console, f"导出失败: {exc}")
+        return False
+    if not args.json:
+        console.print(f"[green]已导出:[/green] {args.output} ({fmt})")
+    return True
 
 
 def _json_special(kind: str, report: Dict) -> str:
@@ -300,7 +391,18 @@ def _handle_config(args, console) -> int:
 
 def _run_special(kind: str, value: str, args) -> Dict:
     if kind == "ip":
-        return lookup_ip(value, timeout=max(args.timeout, 15.0))
+        return lookup_ip(
+            value,
+            timeout=max(args.timeout, 15.0),
+            reverse=not args.no_reverse,
+            reverse_limit=max(1, args.reverse_limit),
+        )
+    if kind == "icp":
+        return lookup_icp(
+            value,
+            timeout=max(args.timeout, 25.0),
+            limit=max(1, args.limit),
+        )
     if kind == "hash":
         return lookup_hash(value, timeout=max(args.timeout, 20.0))
     return analyze_file(
@@ -335,12 +437,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             [cls() for cls in VULN_SOURCES.values()],
             [cls() for cls in INTEL_SOURCES.values()],
             ASSET_PROVIDERS,
+            list(REVERSE_PROVIDERS) + list(ICP_PROVIDERS),
         )
         return 0
 
     if args.asset:
-        if args.vuln or args.threat or args.ip or args.hash or args.file:
-            print_error(console, "-asset 不能和 -v / -t / -ip / -hash / -file 同时使用")
+        if args.vuln or args.threat or args.ip or args.icp or args.hash or args.file:
+            print_error(
+                console,
+                "-asset 不能和 -v / -t / -ip / -icp / -hash / -file 同时使用",
+            )
             return 2
         if args.check_version:
             print_error(console, "--check-version 不能与 -asset 同时使用")
@@ -365,6 +471,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 correlate=not args.no_asset_vuln,
                 max_fingerprints=max(1, args.max_fingerprints),
                 ip_intel=args.ip_intel,
+                reverse_ip_lookup=args.reverse_ip,
+                reverse_limit=max(1, args.reverse_limit),
+                icp=not args.no_icp,
                 debug=args.debug,
             )
 
@@ -379,25 +488,37 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 2
         if args.json:
             print(_json_special("assets", surface.to_dict()))
-            return 0
-        print_asset_report(console, surface)
-        return 0
+        else:
+            print_asset_report(console, surface)
+        exported = _export_result("assets", surface, args, console)
+        return 0 if exported else 1
 
     if args.ports:
         print_error(console, "--ports 仅用于 -asset 资产搜集模式")
         return 2
 
+    if args.reverse_ip and not args.asset:
+        print_error(console, "--reverse-ip 仅用于 -asset 资产搜集模式")
+        return 2
+    if args.no_icp and not args.asset:
+        print_error(console, "--no-icp 仅用于 -asset 资产搜集模式")
+        return 2
+    if args.no_reverse and not args.ip:
+        print_error(console, "--no-reverse 仅用于 -ip 查询")
+        return 2
+
     special = [
         ("ip", args.ip),
+        ("icp", args.icp),
         ("hash", args.hash),
         ("file", args.file),
     ]
     special = [(kind, value) for kind, value in special if value]
     if len(special) > 1:
-        print_error(console, "-ip / -hash / -file 一次只能使用一个")
+        print_error(console, "-ip / -icp / -hash / -file 一次只能使用一个")
         return 2
     if special and (args.vuln or args.threat):
-        print_error(console, "-ip / -hash / -file 不能和 -v / -t 同时使用")
+        print_error(console, "-ip / -icp / -hash / -file 不能和 -v / -t 同时使用")
         return 2
     if special:
         kind, value = special[0]
@@ -412,14 +533,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 2
         if args.json:
             print(_json_special(kind, report))
-            return 0
-        if kind == "ip":
+        elif kind == "ip":
             print_ip_report(console, report)
+        elif kind == "icp":
+            print_icp_report(console, report)
         elif kind == "hash":
             print_hash_report(console, report)
         else:
             print_file_report(console, report)
-        return 0
+        exported = _export_result(kind, report, args, console)
+        return 0 if exported else 1
 
     if args.extra:
         print_error(console, "无法识别的参数: " + " ".join(args.extra))
@@ -506,18 +629,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 deep=args.deep,
                 debug=args.debug,
             )
-        print(
-            _json_output(
-                vuln_query,
-                threat_query,
-                vuln_results,
-                cards,
-                exploits,
-                intel_results,
-                version_check,
-            )
+        payload = _build_search_payload(
+            vuln_query,
+            threat_query,
+            vuln_results,
+            cards,
+            exploits,
+            intel_results,
+            version_check,
         )
-        return 0
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        exported = _export_result("search", payload, args, console)
+        return 0 if exported else 1
 
     if vuln_query:
         print_vuln_results(
@@ -533,6 +656,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if vuln_query:
             console.print()
         print_intel_results(console, threat_query, intel_results, limit)
+    if args.output:
+        payload = _build_search_payload(
+            vuln_query,
+            threat_query,
+            vuln_results,
+            cards,
+            exploits,
+            intel_results,
+            version_check,
+        )
+        exported = _export_result("search", payload, args, console)
+        if not exported:
+            return 1
     return 0
 
 

@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.4.0 — 2026-11-25
+
+### 修复
+
+- 修复资产标题等中文内容乱码：`requests` 对未声明 charset 的 HTML 默认使用 `ISO-8859-1`，旧逻辑优先采用该编码
+- 新增 `tutu/utils.py:decode_html()`：忽略 Latin-1 / ASCII 类不可信编码，优先 UTF-8、声明编码与 GB18030；`repair_mojibake()` 修复 UTF-8 被按 Latin-1 解码的乱码
+
+### 新增能力
+
+- `-icp, --icp QUERY`：ICP 备案查询，支持域名、备案号（如 `豫ICP备16005160号`）与主办单位名称
+- `-ip` 默认反查关联域名（被动 DNS），新增 `--no-reverse` 与 `--reverse-limit`
+- 资产模式 `--reverse-ip`：按解析到的每个公网 IP 反查域名；`--no-icp` 可跳过根域备案查询
+- 端口扫描改为以 IP 为单位：域名解析到多个 A/AAAA 记录时，每个 IP 分别扫描并归属到对应域名
+- Web 端口额外识别 HTTP 状态码、`Server`、页面标题与技术栈
+- 资产报告新增 ICP 摘要、端口 IP / 服务 / 标题列、同 IP 关联域名表
+- `-ip` 报告新增“反查域名（被动 DNS）”表
+
+### 导出
+
+- 新增 `-o, --output PATH` 与 `--export-format {json,csv,xlsx}`
+- 支持导出搜索、资产、IP、ICP 结果；CSV 使用 `utf-8-sig`，XLSX 分 sheet 输出
+- XLSX 依赖 `openpyxl>=3.0`（已加入项目依赖）
+
+### 其他
+
+- 新增 `tutu/lookup/reverse.py`、`tutu/lookup/icp.py`、`tutu/export.py`
+- `tutu sources` 增加 IP 反查与 ICP 备案数据源
+- 版本号升级到 0.4.0；新增 `tests/test_lookup_export.py`
+
 ## 0.3.0 — 2026-11-25
 
 ### 漏洞受影响版本

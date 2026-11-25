@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tutu-cli"
-version = "0.3.0"
-description = "tutu — 多源漏洞与威胁情报聚合搜索 CLI，含受影响版本判定与资产攻击面梳理"
+version = "0.4.0"
+description = "tutu — 多源漏洞与威胁情报聚合搜索 CLI，含受影响版本判定、资产攻击面梳理与结果导出"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
@@ -28,6 +28,7 @@ classifiers = [
 dependencies = [
   "requests>=2.28",
   "rich>=13.0",
+  "openpyxl>=3.0",
 ]
 
 [project.optional-dependencies]

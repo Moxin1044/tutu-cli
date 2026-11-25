@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from ..config import get_api_key
 from ..http import HttpClient, SourceError
 from ..utils import clean_text, truncate
+from .reverse import reverse_ip as reverse_ip_lookup
 from .socradar import ioc_detail as socradar_ioc_detail
 from .socradar import ioc_risk as socradar_ioc_risk
 from .socradar import parse_ioc as parse_socradar_ioc
@@ -194,7 +195,12 @@ def _parse_vt(data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def lookup_ip(ip: str, timeout: float = 20.0) -> Dict[str, Any]:
+def lookup_ip(
+    ip: str,
+    timeout: float = 20.0,
+    reverse: bool = True,
+    reverse_limit: int = 100,
+) -> Dict[str, Any]:
     try:
         address = ip_address(ip.strip())
     except ValueError as exc:
@@ -212,6 +218,7 @@ def lookup_ip(ip: str, timeout: float = 20.0) -> Dict[str, Any]:
         "sources": {},
         "errors": {},
         "reputation": {},
+        "reverse": {},
     }
     if report["private"]:
         report["geo"] = {
@@ -238,6 +245,12 @@ def lookup_ip(ip: str, timeout: float = 20.0) -> Dict[str, Any]:
         tasks["threatbook"] = lambda: _threatbook(http, ip_text, tb_key)
     if vt_key:
         tasks["virustotal"] = lambda: _virustotal(http, ip_text, vt_key)
+    if reverse:
+        tasks["reverse"] = lambda: reverse_ip_lookup(
+            ip_text,
+            timeout=max(timeout, 15.0),
+            limit=max(1, reverse_limit),
+        )
 
     raw: Dict[str, Any] = {}
     with ThreadPoolExecutor(max_workers=min(8, len(tasks))) as pool:
@@ -316,6 +329,7 @@ def lookup_ip(ip: str, timeout: float = 20.0) -> Dict[str, Any]:
     report["virustotal"] = vt
     report["otx"] = otx
     report["socradar_ioc"] = soc
+    report["reverse"] = raw.get("reverse") or {}
     report["reputation"] = _risk(tb, vt, otx, soc)
     return report
 

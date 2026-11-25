@@ -13,12 +13,15 @@ tutu -v CVE-2021-44228 --product log4j --check-version 2.14.1
 tutu -t APT28
 tutu -t lockbit --limit 10
 tutu -asset example.com
-tutu -asset example.com --ports top100 --ip-intel
+tutu -asset example.com --ports top100 --ip-intel --reverse-ip
+tutu -ip 8.8.8.8
+tutu -icp example.com
+tutu -asset example.com -o assets.xlsx
 ```
 
 它会并行查询多个公开数据源，把同一个 CVE 的 NVD、CISA KEV、MITRE、OSV、CISA Vulnrichment、Exploit/PoC 等结果合并成一张卡片；`-t` 则用于 APT 组织、攻击活动、威胁新闻、漏洞通告、勒索软件受害者/组织等情报。
 
-`-asset` 用公开被动数据搜集子域名，再做 DNS 解析、HTTP 指纹和（可选的）端口扫描，把域名 → IP → 端口 → 服务 → 关联 CVE 整理成一张攻击面清单。
+`-asset` 用公开被动数据搜集子域名，再做 DNS 解析、HTTP 指纹和（可选的）端口扫描，把域名 → IP → 端口 → 服务 → 关联 CVE 整理成一张攻击面清单；`-ip` 可反查与 IP 关联的域名，`-icp` 可查询备案信息；任意模式都可用 `-o` 导出 JSON / CSV / XLSX。
 
 > 所有默认源均不需要账号、API Key 或 Token。部分站点存在访问或登录限制，工具会尽量使用公开数据，并在“数据源状态”中明确标注限制，不会静默失败。
 
@@ -49,8 +52,20 @@ tutu -asset example.com --ports top100 --ip-intel
   - HTTP(S) 存活探测：状态码、标题、Server / X-Powered-By、跳转、TLS 信息
   - Web 技术栈指纹（nginx、Apache、IIS、PHP、Tomcat、WordPress、Spring、WebLogic、Shiro、ThinkPHP…）
   - 可选 TCP connect 端口扫描（`--ports top100|web|80,443|1-1024`，默认关闭）
+  - 按解析到的每个 IP 分别扫描端口；Web 端口额外识别状态码、Server、标题与技术栈
+  - 域名解析到多个 A/AAAA 记录时，每个 IP 的结果都会归属到对应域名
+  - 可选 IP 反查域名（`--reverse-ip`）：webscan.cc / HackerTarget / OTX / RapidDNS
+  - 默认查询根域 ICP 备案（`--no-icp` 关闭）
   - 资产指纹与 NVD 关联漏洞（只对带版本号的技术栈查询）
   - 可选 IP 情报（`--ip-intel`）：信誉、ASN / 组织、被动端口
+- **IP 反查 / 备案 `-ip` / `-icp`**
+  - `-ip` 默认反查与 IP 关联的域名（`--no-reverse` 关闭，`--reverse-limit` 限制数量）
+  - `-icp` 支持域名、备案号（如 `豫ICP备16005160号`）与主办单位名称
+  - 反查结果缓存 6 小时，ICP 结果缓存 1 小时，只缓存有结果的查询
+- **结果导出 `-o`**
+  - `-o result.json` / `-o result.csv` / `-o result.xlsx`，格式按扩展名判断
+  - `--export-format` 可覆盖格式；`--json` 与 `-o` 可同时使用
+  - CSV 使用 `utf-8-sig`，Excel 打开中文不乱码；XLSX 分 sheet 展示资产、端口、反查、备案与 CVE
 - **威胁情报 `-t`**
   - 绿盟 NTI：APT 组织、攻击活动、威胁新闻、漏洞通告
   - 360 威胁情报：公开安全通告（站内检索受限时给出入口）
@@ -163,14 +178,31 @@ tutu -v CVE-2021-44228 --product log4j --check-version 2.14.1
 tutu -v CVE-2024-3400 --product pan-os --check-version 10.2.9
 
 # 资产搜集 / 攻击面梳理
-tutu -asset example.com                        # 被动子域名 + DNS + HTTP 指纹
+tutu -asset example.com                        # 被动子域名 + DNS + HTTP 指纹 + ICP
 tutu -asset example.com --ports web            # 额外扫描常见 Web 端口
 tutu -asset example.com --ports 80,443,8080    # 指定端口
 tutu -asset 203.0.113.10 --ports top100        # 单 IP 资产
 tutu -asset 10.0.0.0/24 --ports web            # CIDR（受 --asset-limit 限制）
 tutu -asset example.com --no-probe --json      # 只做子域名与 DNS，输出 JSON
 tutu -asset example.com --ip-intel             # 补充 IP 信誉 / 归属 / 被动端口
+tutu -asset example.com --reverse-ip           # 按每个公网 IP 反查关联域名
+tutu -asset example.com --no-icp               # 跳过 ICP 备案查询
 tutu -asset example.com --no-asset-vuln        # 不做 NVD 漏洞关联
+
+# IP 反查域名 / ICP 备案
+tutu -ip 8.8.8.8                               # 默认附带反查域名
+tutu -ip 8.8.8.8 --no-reverse                  # 只看 IP 情报
+tutu -ip 8.8.8.8 --reverse-limit 30            # 每个 IP 最多保留 30 个域名
+tutu -icp example.com                          # 按域名查备案
+tutu -icp 豫ICP备16005160号                     # 按备案号查
+tutu -icp 信阳职业技术学院                        # 按主办单位查
+
+# 导出（json / csv / xlsx）
+tutu -asset example.com -o assets.xlsx
+tutu -ip 8.8.8.8 -o ip.csv
+tutu -icp example.com -o icp.json
+tutu -v CVE-2021-44228 -o cve.xlsx
+tutu -asset example.com --json -o assets.json  # 终端 JSON + 另存文件
 
 # 配置微步 / VirusTotal API Key（本地持久化）
 tutu -config
@@ -235,7 +267,14 @@ tutu -file sample.exe --no-upload
 | --- | --- |
 | `-v, --vuln QUERY` | 漏洞聚合搜索 |
 | `-t, --threat QUERY` | 威胁情报搜索 |
-| `-ip, --ip IP` | IP 信誉 / 归属 / IOC 查询 |
+| `-ip, --ip IP` | IP 信誉 / 归属 / IOC 查询（默认附带反查域名） |
+| `-icp, --icp QUERY` | ICP 备案查询：域名 / 备案号 / 主办单位名称 |
+| `--reverse-ip` | 资产模式：按解析到的每个公网 IP 反查关联域名 |
+| `--reverse-limit N` | 每个 IP 最多保留多少个反查域名（默认 100） |
+| `--no-reverse` | `-ip` 查询时跳过反查域名 |
+| `--no-icp` | 资产模式跳过 ICP 备案查询 |
+| `-o, --output PATH` | 导出结果到 `.json` / `.csv` / `.xlsx`（可与终端输出同时使用） |
+| `--export-format {json,csv,xlsx}` | 覆盖导出格式；默认按文件扩展名判断 |
 | `-hash, --hash HASH` | MD5 / SHA1 / SHA256 哈希查询 |
 | `-file, --file PATH` | 文件哈希、公开情报与沙箱上传 |
 | `-asset, --asset DOMAIN|IP|CIDR` | 资产搜集：子域名 / DNS / 存活 / 指纹 / 端口 / 关联漏洞 |
@@ -271,7 +310,9 @@ tutu -file sample.exe --no-upload
  ├─ DNS 解析（A / AAAA / CNAME，DoH 优先）
  ├─ HTTP(S) 存活探测（状态码 / 标题 / Server / 跳转 / TLS）
  ├─ Web 技术栈指纹（产品 + 版本）
- ├─ 可选端口扫描（--ports，默认关闭）
+ ├─ 可选端口扫描（--ports，默认关闭；按每个解析 IP 分别扫描）
+ ├─ 可选 IP 反查域名（--reverse-ip）
+ ├─ ICP 备案（默认开启，--no-icp 关闭）
  └─ 与 NVD 关联（只对带版本号的指纹查询，最多 --max-fingerprints 个）
 ```
 
@@ -279,22 +320,25 @@ tutu -file sample.exe --no-upload
 
 - 输入支持域名、单个 IP 或 CIDR；IP / CIDR 会跳过被动子域名源，并按 `--asset-limit` 限制地址数量；
 - 只访问公开的证书日志 / 公开 API / 目标自身的 HTTP(S) 端口，不爆破子域名；
-- 端口扫描默认关闭，必须显式指定 `--ports`；
+- 端口扫描默认关闭，必须显式指定 `--ports`；一个域名解析到多个 IP 时，每个 IP 都会被扫描；
 - 默认每域名最多处理 120 个子域名（`--asset-limit`），避免误伤大域；
-- 扫描组合上限 50000（主机 × 端口），超过会直接报错。
+- 扫描组合上限 50000（主机 × 端口），超过会直接报错；
+- ICP 查询默认使用根域；`--reverse-ip` 只对公网 IP 反查，且每个 IP 最多保留 `--reverse-limit` 个域名。
 
 示例输出（简略）：
 
 ```text
 资产攻击面  example.com
 子域名 42   主机 40   存活 12   服务 18   开放端口 6   关联 CVE 3   耗时 18.4s
+ICP 备案  示例单位  京ICP备00000000号-1  企业
 
 资产清单
 主机                 IP               HTTP  标题 / 技术栈            来源
 www.example.com      93.184.216.34    200   Example  nginx 1.18.0   crtsh, rapiddns
 ...
 开放端口 / 服务
-example.com:8080     http-alt
+目标              IP              端口  服务    HTTP  标题 / 技术栈
+www.example.com   93.184.216.34   443   https   200   Example  nginx 1.18.0
 资产关联漏洞（NVD 指纹匹配）
 CVE-2021-23017       HIGH   www.example.com  nginx 1.18.0  f5/nginx 0.6.18 ~ 1.20.1
 ```
@@ -303,6 +347,9 @@ CVE-2021-23017       HIGH   www.example.com  nginx 1.18.0  f5/nginx 0.6.18 ~ 1.2
 
 - 漏洞关联使用 NVD `virtualMatchString`，每个指纹一次请求；未认证时 NVD 约 5 次/30 秒，可通过环境变量 `NVD_API_KEY` / `TUTU_NVD_API_KEY` 提高配额。
 - 指纹版本来自响应头（如 `Server: nginx/1.18.0`）或页面特征，识别不到版本时会跳过关联，避免误报。
+- 端口扫描以 IP 为单位执行，同一 IP 只扫一次，结果按域名的 DNS 归属展开。
+- Web 端口会额外发送一次 HTTP(S) 请求，识别状态码、`Server`、页面标题与技术栈；失败不影响端口存活结论。
+- 中文标题会按 UTF-8 / GB18030 / 页面声明编码依次尝试，避免 `ISO-8859-1` 默认解码造成乱码。
 - `--ip-intel` 会额外调用 IP 情报源；对公网 IP 默认最多查询 20 个。
 - **请只对自己拥有或已获授权的资产使用端口扫描与存活探测。**
 
@@ -312,7 +359,46 @@ JSON：
 tutu -asset example.com --ports web --json > assets.json
 ```
 
-输出包含 `assets[]`（子域名、IP、CNAME、服务、开放端口）、`cve_hits[]`、`source_results[]`、`stats` 与 `notes`。
+输出包含 `assets[]`（子域名、IP、CNAME、服务、开放端口含 `ip/service/status/title/tech`）、`cve_hits[]`、`reverse_ips[]`、`icp`、`source_results[]`、`stats` 与 `notes`。
+
+### IP 反查域名与 ICP 备案
+
+`-ip` 默认会附带“反查域名（被动 DNS）”，使用以下公开来源合并去重：
+
+```text
+webscan.cc     公开反查接口，通常带页面标题，国内覆盖较好
+HackerTarget   reverseiplookup，免费额度有限
+OTX AlienVault 被动 DNS 历史记录
+RapidDNS       sameip 聚合页
+```
+
+反查结果缓存 6 小时，只缓存有结果的查询；`--no-reverse` 可只看 IP 情报，`--reverse-limit` 控制每个 IP 保留的域名数量。
+
+`-icp` 支持三种查询方式：
+
+```bash
+tutu -icp example.com             # 域名
+tutu -icp 豫ICP备16005160号        # 备案号
+tutu -icp 信阳职业技术学院          # 主办单位
+```
+
+主数据源为糖豆子 API（数据来自工信部，接口自带缓存），失败时会尝试 vvhan / oioweb / uomg 等公开备用源；结果缓存 1 小时。备案接口约 1 秒 1 次，频繁调用可能被临时限流。
+
+### 导出结果
+
+```bash
+tutu -asset example.com -o assets.xlsx
+tutu -asset example.com -o assets.csv
+tutu -ip 8.8.8.8 -o ip.json
+tutu -icp example.com -o icp.xlsx
+tutu -v CVE-2021-44228 -o cve.xlsx
+```
+
+- 格式默认按扩展名判断，也可用 `--export-format json|csv|xlsx` 覆盖；
+- `--json` 与 `-o` 可以同时使用：JSON 输出到终端，`-o` 另写文件；
+- CSV 使用 `utf-8-sig`，Excel 直接打开中文不乱码；
+- XLSX 需要 `openpyxl`（已列入依赖），缺少时会提示安装命令；
+- 资产 XLSX 包含 `资产清单`、`开放端口`、`反查域名`、`ICP备案`、`关联CVE`、`数据源` 六个 sheet。
 
 ### 数据源名称
 
@@ -334,6 +420,13 @@ ransomware_live  ransomlook  socradar  ransomwatch
 
 ```text
 crtsh  certspotter  hackertarget  rapiddns  urlscan  subdomain_center
+```
+
+IP 反查 / 备案：
+
+```text
+webscan  hackertarget  otx  rapiddns        # IP 反查域名
+tangdouz  vvhan  oioweb  uomg               # ICP 备案（主源 + 备用源）
 ```
 
 - `github` 默认关闭：GitHub Advisory API 未认证时只有 60 次/小时。若已有 `GITHUB_TOKEN`，工具会自动读取该环境变量。
@@ -369,7 +462,9 @@ tutu  ·  漏洞与威胁情报聚合搜索
 - `sources`：漏洞源状态（条数、耗时、错误、备注）
 - `version_check`：使用 `--check-version` 时给出 `affected` / `unaffected` / `unknown`
 
-`-asset --json` 输出包含 `assets`（子域名、IP、CNAME、服务、端口）、`cve_hits`、`source_results`、`stats` 与 `notes`。
+`-asset --json` 输出包含 `assets`（子域名、IP、CNAME、服务、端口）、`cve_hits`、`reverse_ips`、`icp`、`source_results`、`stats` 与 `notes`。
+
+`-ip --json` 的 `reverse` 字段包含反查到的 `domains`、`titles`、`sources` 与各来源错误；`-icp --json` 包含 `records`（主办单位 / 性质 / 备案号 / 审核时间）与 `source`。
 
 ---
 
@@ -404,6 +499,12 @@ tutu  ·  漏洞与威胁情报聚合搜索
 | subdomain.center | 资产 | 否 | 公开聚合 API，结果质量不稳定且可能繁忙 |
 | dns.google | 资产 | 否 | DNS-over-HTTPS 解析 A / AAAA / CNAME |
 | NVD `virtualMatchString` | 资产 | 否（可选 Key） | 资产指纹→CVE 关联；未认证约 5 次/30 秒 |
+| webscan.cc | 反查 | 否 | 公开 IP 反查接口，含页面标题 |
+| HackerTarget | 反查 | 否 | reverseiplookup，免费额度有限 |
+| OTX AlienVault | 反查 | 否 | 被动 DNS 历史记录 |
+| RapidDNS | 反查 | 否 | sameip 聚合页，HTML 解析 |
+| 糖豆子 API | 备案 | 否 | 工信部数据，支持域名 / 备案号 / 单位名 |
+| vvhan / oioweb / uomg | 备案 | 否 | 备用公开接口，仅支持域名 |
 
 ### 实际使用的公开接口 / 抓取路径
 
@@ -435,6 +536,11 @@ tutu  ·  漏洞与威胁情报聚合搜索
 | subdomain.center | `/?domain=` | 公开子域名聚合 |
 | dns.google | `/resolve?name=&type=` | DoH 解析 A / AAAA / CNAME |
 | NVD | `/rest/json/cves/2.0?virtualMatchString=` | 资产指纹关联 CVE |
+| webscan.cc | `/?action=query&ip=` | IP 反查域名（含标题） |
+| HackerTarget | `/reverseiplookup/?q=` | IP 反查域名 |
+| OTX | `/api/v1/indicators/IPv{4,6}/{ip}/passive_dns` | 被动 DNS |
+| RapidDNS | `/sameip/{ip}?full=1` | IP 反查域名 |
+| 糖豆子 | `/a/icp/?type=web&search=` | ICP 备案 |
 | ipwho.is | `/8.8.8.8` | IP 归属 |
 | ipinfo.io | `/{ip}/json` | IP 归属 / 主机名 |
 | ip-api.com | `/json/{ip}` | IP 归属 / 代理标记 |

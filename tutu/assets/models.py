@@ -58,18 +58,32 @@ class Service:
 
 @dataclass
 class PortResult:
-    """一个开放端口。"""
+    """一个开放端口。
+
+    host 是资产主机名（域名或输入 IP），ip 是实际被扫描的地址；
+    同一个域名解析到多个 IP 时，会分别出现在 open_ports 中。
+    """
 
     host: str
     port: int
+    ip: str = ""
     service: str = ""
     banner: str = ""
+    scheme: str = ""
+    status: int = 0
+    title: str = ""
+    tech: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "host": self.host,
+            "ip": self.ip,
             "port": self.port,
             "service": self.service,
+            "scheme": self.scheme,
+            "status": self.status,
+            "title": self.title,
+            "tech": list(self.tech),
             "banner": self.banner,
         }
 
@@ -140,6 +154,8 @@ class AttackSurface:
     assets: List[Asset] = field(default_factory=list)
     cve_hits: List[CveHit] = field(default_factory=list)
     source_results: List[SourceResult] = field(default_factory=list)
+    reverse_ips: List[Dict[str, Any]] = field(default_factory=list)
+    icp: Dict[str, Any] = field(default_factory=dict)
     stats: Dict[str, Any] = field(default_factory=dict)
     notes: List[str] = field(default_factory=list)
     generated: str = ""
@@ -151,6 +167,8 @@ class AttackSurface:
             "stats": self.stats,
             "assets": [a.to_dict() for a in self.assets],
             "cve_hits": [c.to_dict() for c in self.cve_hits],
+            "reverse_ips": list(self.reverse_ips),
+            "icp": self.icp,
             "source_results": [
                 {
                     "source": r.source,

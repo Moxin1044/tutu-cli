@@ -277,6 +277,7 @@ def print_sources(
     vuln_sources: Iterable,
     intel_sources: Iterable,
     asset_sources: Optional[Iterable] = None,
+    lookup_sources: Optional[Iterable] = None,
 ) -> None:
     console.print("[bold cyan]tutu[/bold cyan] 可用数据源\n")
 
@@ -293,6 +294,8 @@ def print_sources(
     ]
     if asset_sources:
         groups.append(("资产搜集（被动）", asset_sources))
+    if lookup_sources:
+        groups.append(("IP 反查 / ICP 备案", lookup_sources))
     for title, sources in groups:
         console.print(f"[bold]{title}[/bold]")
         for name, label, description in rows(sources):
@@ -331,6 +334,74 @@ def risk_style(risk: str) -> str:
         "clean": "bold green",
         "unknown": "bold white",
     }.get((risk or "").lower(), "bold white")
+
+
+def _reverse_table(title: str, reverse: dict, limit: int = 40) -> Optional[Table]:
+    domains = (reverse or {}).get("domains") or []
+    if not domains:
+        return None
+    table = Table(
+        title=title,
+        box=box.SIMPLE_HEAD,
+        show_edge=False,
+        pad_edge=False,
+        title_justify="left",
+    )
+    table.add_column("IP", style="cyan", no_wrap=True)
+    table.add_column("域名", style="white", overflow="fold")
+    table.add_column("标题", overflow="fold", max_width=46)
+    table.add_column("来源", overflow="fold", max_width=22)
+    ip = str((reverse or {}).get("ip") or "-")
+    titles = (reverse or {}).get("titles") or {}
+    sources = (reverse or {}).get("sources") or {}
+    for domain in domains[:limit]:
+        table.add_row(
+            ip,
+            domain,
+            titles.get(domain) or "-",
+            ", ".join(sources.get(domain) or []) or "-",
+        )
+    return table
+
+
+def print_icp_report(console: Console, report: dict) -> None:
+    console.print()
+    title = Text()
+    title.append("ICP 备案  ", style="bold cyan")
+    title.append(report.get("query", ""), style="bold white")
+    console.print(title)
+    records = report.get("records") or []
+    if records:
+        table = Table(
+            title="备案信息",
+            box=box.SIMPLE_HEAD,
+            show_edge=False,
+            pad_edge=False,
+            title_justify="left",
+        )
+        table.add_column("域名", style="cyan", overflow="fold")
+        table.add_column("主办单位", overflow="fold")
+        table.add_column("性质", no_wrap=True)
+        table.add_column("备案号", overflow="fold")
+        table.add_column("服务备案号", overflow="fold")
+        table.add_column("审核时间", no_wrap=True)
+        for record in records:
+            table.add_row(
+                record.get("domain") or "-",
+                record.get("unit_name") or "-",
+                record.get("nature") or "-",
+                record.get("main_licence") or record.get("icp") or "-",
+                record.get("service_licence") or record.get("icp") or "-",
+                record.get("updated") or "-",
+            )
+        console.print(table)
+    else:
+        console.print(Text(report.get("note") or "未查询到备案记录", style="yellow"))
+    if report.get("source"):
+        console.print(Text(f"数据源: {report['source']}", style="dim"))
+    if report.get("errors"):
+        console.print(_kv_table("未成功的数据源", list(report["errors"].items())))
+    console.print()
 
 
 def print_ip_report(console: Console, report: dict) -> None:
@@ -418,6 +489,21 @@ def print_ip_report(console: Console, report: dict) -> None:
         ("SOCRadar IOC", soc_text or "未命中/无记录"),
     ]
     console.print(_kv_table("威胁情报", rep_rows))
+    reverse = report.get("reverse") or {}
+    reverse_table = _reverse_table("反查域名（被动 DNS）", reverse)
+    if reverse_table is not None:
+        console.print(reverse_table)
+        if reverse.get("truncated"):
+            console.print(
+                Text(
+                    f"仅展示前 {len(reverse.get('domains') or [])} 个，共 {reverse.get('total')} 个",
+                    style="dim",
+                )
+            )
+    elif reverse.get("errors"):
+        console.print(
+            _kv_table("反查域名失败", list(reverse["errors"].items()))
+        )
     if report.get("errors"):
         console.print(
             _kv_table(
@@ -586,6 +672,21 @@ def print_asset_report(console: Console, surface) -> None:
     meta.append(f"   关联 CVE {stats.get('cve_hits', 0)}", style="red")
     meta.append(f"   耗时 {stats.get('elapsed', 0)}s", style="dim")
     console.print(meta)
+    icp = surface.icp or {}
+    icp_records = icp.get("records") or []
+    if icp_records:
+        first = icp_records[0]
+        console.print(
+            Text.assemble(
+                ("ICP 备案  ", "bold cyan"),
+                (first.get("unit_name") or "-", "white"),
+                ("  ", ""),
+                (first.get("icp") or first.get("service_licence") or "-", "green"),
+                (f"  {first.get('nature')}" if first.get("nature") else "", "dim"),
+            )
+        )
+    elif icp and icp.get("note") and not icp.get("errors"):
+        console.print(Text(f"ICP 备案  {icp['note']}", style="dim"))
     console.print()
 
     if surface.assets:
@@ -643,11 +744,63 @@ def print_asset_report(console: Console, surface) -> None:
             title_justify="left",
         )
         table.add_column("目标", style="cyan", no_wrap=True)
+        table.add_column("IP", no_wrap=True)
+        table.add_column("端口", no_wrap=True)
         table.add_column("服务", style="green", no_wrap=True)
-        table.add_column("Banner", overflow="fold")
-        for row in ports[:200]:
-            table.add_row(f"{row.host}:{row.port}", row.service or "-", row.banner or "-")
+        table.add_column("HTTP", no_wrap=True)
+        table.add_column("标题 / 技术栈", overflow="fold", max_width=40)
+        table.add_column("Banner", overflow="fold", max_width=40)
+        seen = set()
+        for row in ports:
+            key = (row.ip or row.host, row.port)
+            if key in seen:
+                continue
+            seen.add(key)
+            detail = row.title or ""
+            tech = ", ".join(truncate(t, 20) for t in row.tech[:4])
+            if tech:
+                detail = (detail + "  " if detail else "") + tech
+            table.add_row(
+                row.host,
+                row.ip or "-",
+                str(row.port),
+                row.service or "-",
+                str(row.status) if row.status else "-",
+                Text(detail or "-", style="dim"),
+                row.banner or "-",
+            )
         console.print(table)
+
+    reverse_groups = [
+        row for row in (surface.reverse_ips or []) if row.get("domains")
+    ]
+    if reverse_groups:
+        table = Table(
+            title="同 IP 关联域名（反查）",
+            box=box.SIMPLE_HEAD,
+            show_edge=False,
+            pad_edge=False,
+            title_justify="left",
+        )
+        table.add_column("IP", style="cyan", no_wrap=True)
+        table.add_column("域名", overflow="fold", max_width=46)
+        table.add_column("标题", overflow="fold", max_width=40)
+        table.add_column("来源", overflow="fold", max_width=20)
+        for group in reverse_groups[:10]:
+            ip = str(group.get("ip") or "-")
+            titles = group.get("titles") or {}
+            sources = group.get("sources") or {}
+            for domain in (group.get("domains") or [])[:15]:
+                table.add_row(
+                    ip,
+                    domain,
+                    titles.get(domain) or "-",
+                    ", ".join(sources.get(domain) or []) or "-",
+                )
+        console.print(table)
+        total = sum(len(group.get("domains") or []) for group in reverse_groups)
+        if total:
+            console.print(Text(f"共 {total} 个关联域名（按 IP 去重前）", style="dim"))
 
     if surface.cve_hits:
         table = Table(
@@ -712,10 +865,13 @@ def print_no_args(console: Console) -> None:
     console.print("  [cyan]tutu CVE-2021-44228[/cyan]          省略 -v 时默认按漏洞搜索")
     console.print("  [cyan]tutu -t APT28[/cyan]                威胁情报搜索（绿盟 / 微步 / 360 / 勒索软件…）")
     console.print("  [cyan]tutu -t lockbit --limit 10[/cyan]   限制每个来源的展示条数")
-    console.print("  [cyan]tutu -ip 8.8.8.8[/cyan]             IP 信誉 / 归属 / IOC 查询")
     console.print("  [cyan]tutu -hash <MD5|SHA1|SHA256>[/cyan] 哈希情报查询")
     console.print("  [cyan]tutu -file sample.exe[/cyan]        文件哈希 + 沙箱上传")
     console.print("  [cyan]tutu -asset example.com[/cyan]      子域名 / DNS / 存活 / 端口攻击面梳理")
+    console.print("  [cyan]tutu -ip 8.8.8.8[/cyan]             IP 归属 / IOC / 反查关联域名")
+    console.print("  [cyan]tutu -icp example.com[/cyan]         ICP 备案查询（域名 / 备案号 / 单位名）")
+    console.print("  [cyan]tutu -asset example.com -o out.xlsx[/cyan]")
+    console.print("                                         导出 JSON / CSV / XLSX")
     console.print("  [cyan]tutu -v CVE-2024-3400 --product nginx --check-version 1.18.0[/cyan]")
     console.print("                                         判断本地版本是否受影响")
     console.print("  [cyan]tutu -config[/cyan]                 配置微步 / VirusTotal API Key")

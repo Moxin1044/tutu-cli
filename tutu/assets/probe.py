@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib3.exceptions import InsecureRequestWarning
 
 from ..http import HttpClient, SourceError
-from ..utils import clean_text, truncate
+from ..utils import clean_text, decode_html, truncate
 from .models import Service
 
 log = logging.getLogger("tutu.assets.probe")
@@ -138,15 +138,13 @@ def _tls_info(host: str, port: int = 443, timeout: float = 8.0) -> Dict[str, obj
     return info
 
 
-def _decode(body: bytes, encoding: Optional[str]) -> str:
-    for codec in (encoding, "utf-8", "gb18030", "latin-1"):
-        if not codec:
-            continue
-        try:
-            return body.decode(codec, "ignore")
-        except (LookupError, UnicodeError):
-            continue
-    return ""
+def _decode(
+    body: bytes,
+    encoding: Optional[str],
+    content_type: str = "",
+) -> str:
+    """兼容旧调用；实际解码逻辑在 utils.decode_html。"""
+    return decode_html(body, encoding, content_type)
 
 
 def _read_body(resp) -> bytes:
@@ -179,7 +177,7 @@ def probe_url(
         log.debug("探测 %s 失败: %s", url, exc)
         return None
     body = _read_body(resp)
-    text = _decode(body, resp.encoding)
+    text = _decode(body, resp.encoding, resp.headers.get("content-type", ""))
     headers = {key: resp.headers.get(key, "") for key in HEADER_KEYS if resp.headers.get(key)}
     headers_text = "\n".join(f"{k}: {v}" for k, v in resp.headers.items())
     tech = _tech_from_text(headers_text, text[:MAX_BODY])

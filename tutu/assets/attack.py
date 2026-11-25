@@ -5,15 +5,18 @@ import ipaddress
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from typing import Dict, List, Optional, Sequence
 
 from ..http import HttpClient
+from ..lookup.icp import lookup_icp
 from ..lookup.ip import lookup_ip
+from ..lookup.reverse import reverse_ip
 from ..utils import utc_now
 from .correlate import correlate_assets
 from .dns import is_wildcard, public_ips, resolve_host
 from .models import Asset, AttackSurface, PortResult
-from .ports import scan_hosts
+from .ports import scan_ips
 from .probe import probe_host
 from .subdomain import collect_subdomains, normalize_domain
 
@@ -65,6 +68,9 @@ def collect_assets(
     correlate: bool = True,
     max_fingerprints: int = 5,
     ip_intel: bool = False,
+    reverse_ip_lookup: bool = False,
+    reverse_limit: int = 100,
+    icp: bool = True,
     debug: bool = False,
 ) -> AttackSurface:
     started = time.monotonic()
@@ -191,19 +197,25 @@ def collect_assets(
 
     port_results: List[PortResult] = []
     if ports:
-        scan_targets = [asset.host for asset in assets if asset.ips]
-        port_results = scan_hosts(
-            scan_targets,
+        # 按解析后的 IP 扫描：一个域名有多个 A/AAAA 记录时每个 IP 都会覆盖。
+        # 同一 IP 只扫描一次，结果再按域名归属展开。
+        unique_ips = sorted({ip for asset in assets for ip in asset.ips})
+        port_results = scan_ips(
+            unique_ips,
             ports,
             timeout=min(timeout, 3.0),
             threads=max(threads, 32),
         )
-        by_host: Dict[str, List[PortResult]] = {}
+        by_ip: Dict[str, List[PortResult]] = {}
         for row in port_results:
-            by_host.setdefault(row.host, []).append(row)
+            by_ip.setdefault(row.ip or row.host, []).append(row)
         for asset in assets:
-            if asset.host in by_host:
-                asset.open_ports = by_host[asset.host]
+            rows: List[PortResult] = []
+            for ip in asset.ips:
+                for row in by_ip.get(ip, []):
+                    rows.append(replace(row, host=asset.host))
+            if rows:
+                asset.open_ports = sorted(rows, key=lambda r: (r.ip, r.port))
                 if not asset.note:
                     asset.note = f"开放 {len(asset.open_ports)} 个端口"
 
@@ -254,6 +266,54 @@ def collect_assets(
             if risky:
                 surface.notes.append("IP 情报标记可疑: " + ", ".join(risky))
 
+    if reverse_ip_lookup:
+        unique = public_ips([ip for asset in assets for ip in asset.ips])
+        if unique:
+            results: List[Dict[str, object]] = []
+            with ThreadPoolExecutor(max_workers=min(4, len(unique))) as pool:
+                futures = {
+                    pool.submit(
+                        reverse_ip,
+                        ip,
+                        timeout=max(timeout, 15.0),
+                        limit=max(1, reverse_limit),
+                    ): ip
+                    for ip in unique[:50]
+                }
+                for future in as_completed(futures):
+                    ip = futures[future]
+                    try:
+                        row = future.result()
+                    except Exception as exc:  # noqa: BLE001
+                        if debug:
+                            log.debug("反查域名 %s 失败: %s", ip, exc)
+                        row = {"ip": ip, "domains": [], "errors": {"reverse": str(exc)[:240]}}
+                    results.append(row)
+            results.sort(key=lambda row: str(row.get("ip") or ""))
+            surface.reverse_ips = results
+            total_domains = sum(len(row.get("domains") or []) for row in results)
+            surface.stats["reverse_domains"] = total_domains
+            if total_domains:
+                surface.notes.append(
+                    f"反查域名：{len(results)} 个 IP 关联到 {total_domains} 个域名"
+                )
+
+    if icp and network is None:
+        try:
+            surface.icp = lookup_icp(
+                surface.domain,
+                timeout=max(timeout, 25.0),
+                limit=max(1, limit),
+            )
+        except Exception as exc:  # noqa: BLE001 - 备案查询失败不影响资产结果
+            log.debug("ICP 查询失败: %s", exc)
+            surface.icp = {
+                "query": surface.domain,
+                "records": [],
+                "success": False,
+                "errors": {"icp": str(exc)[:240] or exc.__class__.__name__},
+            }
+
     assets.sort(
         key=lambda a: (
             0 if a.services else (1 if a.ips else 2),
@@ -273,6 +333,11 @@ def collect_assets(
             "open_ports": len(port_results),
             "unique_ips": len({ip for a in assets for ip in a.ips}),
             "cve_hits": len(surface.cve_hits),
+            "reverse_ips": len(surface.reverse_ips),
+            "reverse_domains": sum(
+                len(row.get("domains") or []) for row in surface.reverse_ips
+            ),
+            "icp_records": len((surface.icp or {}).get("records") or []),
             "port_scan": "on" if ports else "off",
             "input": "ip" if network is not None else "domain",
             "elapsed": round(time.monotonic() - started, 1),

@@ -1,13 +1,21 @@
-"""TCP connect 端口扫描（仅在显式指定 --ports 时启用）。"""
+"""TCP connect 端口扫描（仅在显式指定 --ports 时启用）。
+
+扫描以 IP 为单位执行，因此一个域名解析到多个 A/AAAA 记录时，每个 IP
+都会单独扫描；对常见 Web 端口会额外发送 HTTP(S) 请求，识别状态码、
+Server、页面标题与技术栈。
+"""
 from __future__ import annotations
 
 import logging
 import re
 import socket
+import ssl
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+from ..utils import decode_html, repair_mojibake, truncate
 from .models import PortResult
+from .probe import TITLE_RE, _tech_from_text
 
 log = logging.getLogger("tutu.assets.ports")
 
@@ -54,6 +62,11 @@ PORT_SERVICES: Dict[int, str] = {
 
 BANNER_PORTS = {21, 22, 23, 25, 110, 143, 465, 587, 993, 995, 3306, 5432, 6379, 11211, 27017}
 
+TLS_PORTS = {
+    443, 465, 636, 853, 990, 992, 993, 995, 2376, 5986, 6443, 7002, 8443,
+    9443, 10443,
+}
+
 _BANNER_HINTS = [
     (re.compile(r"^SSH-", re.I), "ssh"),
     (re.compile(r"^220.*(?:FTP|ftp)", re.I), "ftp"),
@@ -64,6 +77,18 @@ _BANNER_HINTS = [
     (re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+.*MariaDB", re.I), "mysql"),
     (re.compile(r"PostgreSQL", re.I), "postgres"),
 ]
+
+_TLS_CONTEXT = ssl.create_default_context()
+_TLS_CONTEXT.check_hostname = False
+_TLS_CONTEXT.verify_mode = ssl.CERT_NONE
+
+_HTTP_REQUEST = (
+    "GET / HTTP/1.0\r\n"
+    "Host: {host}\r\n"
+    "User-Agent: Mozilla/5.0 (compatible; tutu/0.4; +https://github.com/Moxin1044/tutu-cli)\r\n"
+    "Accept: */*\r\n"
+    "Connection: close\r\n\r\n"
+).encode("ascii")
 
 
 class PortSpecError(ValueError):
@@ -116,48 +141,122 @@ def _service_for(port: int, banner: str) -> str:
     return PORT_SERVICES.get(port, "")
 
 
-def _scan_one(host: str, port: int, timeout: float) -> Optional[PortResult]:
+def _recv(sock, limit: int = 32768) -> bytes:
+    chunks: List[bytes] = []
+    total = 0
+    while total < limit:
+        try:
+            chunk = sock.recv(min(8192, limit - total))
+        except (socket.timeout, OSError):
+            break
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    return b"".join(chunks)
+
+
+def _http_probe(ip: str, port: int, timeout: float) -> Optional[Dict[str, object]]:
+    """通过 HTTP(S) 请求识别 Web 服务；失败时返回 None，但不影响端口存活结论。"""
+    tls = port in TLS_PORTS
+    request = _HTTP_REQUEST.replace(b"{host}", ip.encode("ascii", "ignore"))
     try:
-        with socket.create_connection((host, port), timeout=timeout) as sock:
-            sock.settimeout(min(1.5, timeout))
-            banner = ""
+        with socket.create_connection((ip, port), timeout=timeout) as sock:
+            sock.settimeout(min(4.0, max(1.0, timeout)))
+            if tls:
+                with _TLS_CONTEXT.wrap_socket(sock, server_hostname=ip) as tls_sock:
+                    tls_sock.sendall(request)
+                    raw = _recv(tls_sock)
+            else:
+                sock.sendall(request)
+                raw = _recv(sock)
+    except (OSError, ssl.SSLError):
+        return None
+    if not raw:
+        return None
+    text = decode_html(raw, None, "text/html")
+    status = 0
+    match = re.search(r"HTTP/\d(?:\.\d)?\s+(\d{3})", text[:400], re.I)
+    if match:
+        status = int(match.group(1))
+    server_match = re.search(r"(?im)^Server:\s*(.+?)\s*$", text[:8192])
+    server = repair_mojibake((server_match.group(1) if server_match else "").strip())
+    title_match = TITLE_RE.search(text)
+    title = repair_mojibake(title_match.group(1).strip()) if title_match else ""
+    tech = _tech_from_text(text[:8192], text[: 96 * 1024])
+    banner_parts = [
+        f"HTTP {status}" if status else "HTTP",
+        f"Server: {server}" if server else "",
+        truncate(title, 80) if title else "",
+    ]
+    return {
+        "scheme": "https" if tls else "http",
+        "status": status,
+        "title": truncate(title, 120),
+        "tech": [
+            f"{row.get('product', '')} {row.get('version', '')}".strip()
+            for row in tech
+            if row.get("product")
+        ],
+        "banner": truncate(" | ".join(part for part in banner_parts if part), 200),
+    }
+
+
+def _scan_one(host: str, ip: str, port: int, timeout: float) -> Optional[PortResult]:
+    banner = ""
+    try:
+        with socket.create_connection((ip, port), timeout=timeout) as sock:
+            sock.settimeout(min(1.5, max(0.3, timeout)))
             if port in BANNER_PORTS:
-                try:
-                    raw = sock.recv(256)
-                    banner = raw.decode("utf-8", "ignore").strip()
-                except (socket.timeout, OSError):
-                    banner = ""
-            return PortResult(
-                host=host,
-                port=port,
-                service=_service_for(port, banner),
-                banner=banner[:160],
-            )
+                raw = _recv(sock, 256)
+                banner = repair_mojibake(decode_html(raw, None).strip())
     except (socket.timeout, OSError):
         return None
 
+    web = _http_probe(ip, port, timeout) if (port in WEB_PORTS or banner.startswith("HTTP/")) else None
+    if web:
+        return PortResult(
+            host=host,
+            ip=ip,
+            port=port,
+            service=str(web.get("scheme") or "http"),
+            scheme=str(web.get("scheme") or ""),
+            status=int(web.get("status") or 0),
+            title=str(web.get("title") or ""),
+            tech=list(web.get("tech") or []),
+            banner=str(web.get("banner") or ""),
+        )
+    return PortResult(
+        host=host,
+        ip=ip,
+        port=port,
+        service=_service_for(port, banner),
+        banner=banner[:200],
+    )
 
-def scan_hosts(
-    hosts: Sequence[str],
+
+def scan_targets(
+    targets: Sequence[Tuple[str, str]],
     ports: Iterable[int],
     timeout: float = 2.0,
     threads: int = 64,
     max_checks: int = 50000,
 ) -> List[PortResult]:
+    """扫描 (host, ip) 列表；同一 IP 的端口探测可被多个主机共享。"""
     port_list = list(ports)
-    if not hosts or not port_list:
+    if not targets or not port_list:
         return []
-    total = len(hosts) * len(port_list)
+    total = len(targets) * len(port_list)
     if total > max_checks:
         raise ValueError(
-            f"端口扫描组合过多（{len(hosts)} 主机 × {len(port_list)} 端口 = {total}），"
+            f"端口扫描组合过多（{len(targets)} 主机 × {len(port_list)} 端口 = {total}），"
             f"请缩小范围或提高 --max-checks（当前上限 {max_checks}）"
         )
     results: List[PortResult] = []
     with ThreadPoolExecutor(max_workers=max(1, min(threads, 256))) as pool:
         futures = [
-            pool.submit(_scan_one, host, port, timeout)
-            for host in hosts
+            pool.submit(_scan_one, host, ip, port, timeout)
+            for host, ip in targets
             for port in port_list
         ]
         for future in as_completed(futures):
@@ -167,5 +266,43 @@ def scan_hosts(
                 continue
             if item is not None:
                 results.append(item)
-    results.sort(key=lambda r: (r.host, r.port))
+    results.sort(key=lambda r: (r.ip, r.host, r.port))
     return results
+
+
+def scan_ips(
+    ips: Sequence[str],
+    ports: Iterable[int],
+    timeout: float = 2.0,
+    threads: int = 64,
+    max_checks: int = 50000,
+) -> List[PortResult]:
+    """按 IP 扫描端口（host 与 ip 相同）。"""
+    unique: List[str] = []
+    for ip in ips:
+        if ip and ip not in unique:
+            unique.append(ip)
+    return scan_targets(
+        [(ip, ip) for ip in unique],
+        ports,
+        timeout=timeout,
+        threads=threads,
+        max_checks=max_checks,
+    )
+
+
+def scan_hosts(
+    hosts: Sequence[str],
+    ports: Iterable[int],
+    timeout: float = 2.0,
+    threads: int = 64,
+    max_checks: int = 50000,
+) -> List[PortResult]:
+    """兼容旧接口：主机名与扫描地址相同。"""
+    return scan_targets(
+        [(host, host) for host in hosts],
+        ports,
+        timeout=timeout,
+        threads=threads,
+        max_checks=max_checks,
+    )

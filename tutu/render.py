@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, List, Sequence
+from typing import Dict, Iterable, Optional, Sequence
 
 from rich import box
 from rich.console import Console, Group
@@ -9,7 +9,7 @@ from rich.table import Table
 from rich.text import Text
 
 from .models import Item, SourceResult, VulnCard
-from .utils import normalize_severity, severity_rank, truncate
+from .utils import normalize_severity, truncate
 
 CATEGORY_LABELS = {
     "vulnerability": "漏洞",
@@ -22,6 +22,10 @@ CATEGORY_LABELS = {
     "group": "勒索组织",
     "ioc": "IOC/情报",
     "portal": "检索入口",
+    "subdomain": "子域名",
+    "port": "端口",
+    "service": "服务",
+    "asset_vuln": "关联漏洞",
 }
 
 
@@ -87,6 +91,9 @@ def _card_panel(card: VulnCard, console: Console) -> Panel:
     if card.affected_products:
         body.append("\n🎯 Affected Products: ", style="bold yellow")
         body.append(" · ".join(card.affected_products[:10]), style="white")
+    if card.version_ranges:
+        body.append("\n📦 受影响版本: ", style="bold cyan")
+        body.append(" · ".join(card.affected_versions(6)), style="white")
     if card.tags:
         body.append("\n标签: ", style="dim")
         body.append(", ".join(card.tags[:10]), style="magenta")
@@ -117,6 +124,7 @@ def print_vuln_results(
     standalone_exploits: Sequence[Item],
     results: Sequence[SourceResult],
     limit: int,
+    version_check: Optional[Dict[str, list]] = None,
 ) -> None:
     banner(console, query, "vuln", [r.label for r in results])
     if not cards:
@@ -126,6 +134,9 @@ def print_vuln_results(
             console.print(_card_panel(card, console))
         console.print(f"[dim]共展示 {min(len(cards), limit)} 条漏洞；--limit 可调整。[/dim]")
 
+    if version_check:
+        print_version_check(console, version_check)
+
     if standalone_exploits:
         console.print()
         console.print("[bold red]未关联到 CVE 的 Exploit/PoC[/bold red]")
@@ -133,6 +144,51 @@ def print_vuln_results(
             console.print(f"  • {item.title}  [dim]{item.url}[/dim]")
 
     print_source_status(console, results)
+
+
+def print_version_check(console: Console, check: Dict[str, list]) -> None:
+    """渲染 `--check-version` 的本地版本命中结果。"""
+    product = check.get("product") or "（未指定产品）"
+    version = check.get("version") or ""
+    console.print()
+    header = Text()
+    header.append("版本判定  ", style="bold cyan")
+    header.append(f"{product} {version}".strip(), style="bold white")
+    console.print(header)
+    if check.get("empty"):
+        console.print(Text("没有可判定的漏洞卡片（查询无结果或数据源失败）。", style="yellow"))
+        console.print()
+        return
+    affected = check.get("affected") or []
+    if affected:
+        console.print(Text(f"⚠ 该版本落入 {len(affected)} 条漏洞的受影响区间", style="bold red"))
+        table = Table(box=box.SIMPLE_HEAD, show_edge=False, pad_edge=False)
+        table.add_column("CVE", style="bold red", no_wrap=True)
+        table.add_column("产品", style="cyan")
+        table.add_column("受影响区间", overflow="fold")
+        for row in affected[:20]:
+            table.add_row(row.get("cve", ""), row.get("product", ""), row.get("range", ""))
+        console.print(table)
+    else:
+        console.print(Text("✓ 未命中已披露的受影响区间（不代表绝对安全）", style="bold green"))
+
+    unaffected = check.get("unaffected") or []
+    unknown = check.get("unknown") or []
+    if unaffected:
+        console.print(
+            Text(
+                "不受影响: " + ", ".join(r.get("cve", "") for r in unaffected[:10]),
+                style="dim",
+            )
+        )
+    if unknown:
+        console.print(
+            Text(
+                "版本信息不足，无法判定: " + ", ".join(r.get("cve", "") for r in unknown[:10]),
+                style="yellow",
+            )
+        )
+    console.print()
 
 
 def _intel_line(item: Item, console: Console) -> None:
@@ -220,14 +276,29 @@ def print_sources(
     console: Console,
     vuln_sources: Iterable,
     intel_sources: Iterable,
+    asset_sources: Optional[Iterable] = None,
 ) -> None:
     console.print("[bold cyan]tutu[/bold cyan] 可用数据源\n")
-    for title, sources in (("漏洞 / Exploit", vuln_sources), ("威胁情报", intel_sources)):
-        console.print(f"[bold]{title}[/bold]")
+
+    def rows(sources: Iterable):
         for src in sources:
+            if isinstance(src, tuple):
+                yield src[0], src[1], src[2]
+            else:
+                yield src.name, src.label, src.description
+
+    groups = [
+        ("漏洞 / Exploit", vuln_sources),
+        ("威胁情报", intel_sources),
+    ]
+    if asset_sources:
+        groups.append(("资产搜集（被动）", asset_sources))
+    for title, sources in groups:
+        console.print(f"[bold]{title}[/bold]")
+        for name, label, description in rows(sources):
             console.print(
-                f"  [cyan]{src.name:<18}[/cyan] {src.label}\n"
-                f"  {'':<18} [dim]{src.description}[/dim]"
+                f"  [cyan]{name:<18}[/cyan] {label}\n"
+                f"  {'':<18} [dim]{description}[/dim]"
             )
         console.print()
     console.print(
@@ -498,6 +569,142 @@ def print_file_report(console: Console, report: dict) -> None:
     console.print()
 
 
+def print_asset_report(console: Console, surface) -> None:
+    """渲染一次资产搜集结果。"""
+    stats = surface.stats or {}
+    console.print()
+    title = Text()
+    title.append("资产攻击面  ", style="bold cyan")
+    title.append(surface.domain, style="bold white")
+    console.print(title)
+    meta = Text()
+    meta.append(f"子域名 {stats.get('subdomains', 0)}", style="white")
+    meta.append(f"   主机 {stats.get('hosts_processed', 0)}", style="white")
+    meta.append(f"   存活 {stats.get('alive', 0)}", style="green")
+    meta.append(f"   服务 {stats.get('services', 0)}", style="green")
+    meta.append(f"   开放端口 {stats.get('open_ports', 0)}", style="yellow")
+    meta.append(f"   关联 CVE {stats.get('cve_hits', 0)}", style="red")
+    meta.append(f"   耗时 {stats.get('elapsed', 0)}s", style="dim")
+    console.print(meta)
+    console.print()
+
+    if surface.assets:
+        table = Table(
+            title="资产清单",
+            box=box.SIMPLE_HEAD,
+            show_edge=False,
+            pad_edge=False,
+            title_justify="left",
+        )
+        table.add_column("主机", style="cyan", no_wrap=True, overflow="ellipsis", max_width=46)
+        table.add_column("IP", no_wrap=True, overflow="ellipsis", max_width=30)
+        table.add_column("HTTP", no_wrap=True)
+        table.add_column("标题 / 技术栈", overflow="fold", max_width=44)
+        table.add_column("来源", overflow="fold", max_width=20)
+        table.add_column("备注", overflow="fold", max_width=18)
+        for asset in surface.assets[:200]:
+            ips = ", ".join(asset.ips[:2]) or (asset.cnames[0] if asset.cnames else "-")
+            if len(asset.ips) > 2:
+                ips += f" (+{len(asset.ips) - 2})"
+            ips = truncate(ips, 34)
+            service = asset.services[0] if asset.services else None
+            http = f"{service.status}" if service else "-"
+            detail = ""
+            if service:
+                detail = service.title or ""
+                tech = ", ".join(truncate(t, 24) for t in service.tech_names[:4])
+                if tech:
+                    detail = (detail + "  " if detail else "") + tech
+                if not detail:
+                    detail = "-"
+            else:
+                detail = "-"
+            if asset.wildcard and not asset.ips:
+                detail = "泛解析"
+            table.add_row(
+                ("*." if asset.wildcard and not asset.ips else "") + asset.host,
+                ips,
+                http,
+                Text(truncate(detail, 90), style="dim" if not service else "white"),
+                ", ".join(asset.sources[:3]) or "-",
+                asset.note,
+            )
+        console.print(table)
+
+    ports = [
+        row for asset in surface.assets for row in asset.open_ports
+    ]
+    if ports:
+        table = Table(
+            title="开放端口 / 服务",
+            box=box.SIMPLE_HEAD,
+            show_edge=False,
+            pad_edge=False,
+            title_justify="left",
+        )
+        table.add_column("目标", style="cyan", no_wrap=True)
+        table.add_column("服务", style="green", no_wrap=True)
+        table.add_column("Banner", overflow="fold")
+        for row in ports[:200]:
+            table.add_row(f"{row.host}:{row.port}", row.service or "-", row.banner or "-")
+        console.print(table)
+
+    if surface.cve_hits:
+        table = Table(
+            title="资产关联漏洞（NVD 指纹匹配）",
+            box=box.SIMPLE_HEAD,
+            show_edge=False,
+            pad_edge=False,
+            title_justify="left",
+        )
+        table.add_column("CVE", style="bold red", no_wrap=True)
+        table.add_column("严重性", no_wrap=True)
+        table.add_column("主机", style="cyan")
+        table.add_column("指纹", overflow="fold")
+        table.add_column("受影响区间", overflow="fold")
+        table.add_column("摘要", overflow="fold")
+        for hit in surface.cve_hits[:30]:
+            table.add_row(
+                hit.cve,
+                Text(hit.severity or "-", style=severity_style(hit.severity)),
+                hit.host,
+                f"{hit.product} {hit.version}".strip(),
+                hit.affected or "-",
+                truncate(hit.summary, 100),
+            )
+        console.print(table)
+
+    intel = (surface.stats or {}).get("ip_intel") or {}
+    if intel:
+        table = Table(
+            title="IP 情报",
+            box=box.SIMPLE_HEAD,
+            show_edge=False,
+            pad_edge=False,
+            title_justify="left",
+        )
+        table.add_column("IP", style="cyan", no_wrap=True)
+        table.add_column("风险", no_wrap=True)
+        table.add_column("ASN / 组织", overflow="fold")
+        table.add_column("国家", no_wrap=True)
+        table.add_column("被动端口", overflow="fold")
+        for ip, row in intel.items():
+            table.add_row(
+                ip,
+                Text(str(row.get("risk", "unknown")), style=risk_style(str(row.get("risk", "")))),
+                " ".join(str(x) for x in (row.get("asn"), row.get("org")) if x) or "-",
+                str(row.get("country") or "-"),
+                ", ".join(str(p) for p in (row.get("open_ports") or [])[:12]) or "-",
+            )
+        console.print(table)
+
+    for note in surface.notes:
+        console.print(Text("• " + note, style="yellow"))
+    if surface.notes:
+        console.print()
+    print_source_status(console, surface.source_results)
+
+
 def print_no_args(console: Console) -> None:
     banner(console, "-", "vuln", [])
     console.print("[bold]用法[/bold]")
@@ -508,6 +715,9 @@ def print_no_args(console: Console) -> None:
     console.print("  [cyan]tutu -ip 8.8.8.8[/cyan]             IP 信誉 / 归属 / IOC 查询")
     console.print("  [cyan]tutu -hash <MD5|SHA1|SHA256>[/cyan] 哈希情报查询")
     console.print("  [cyan]tutu -file sample.exe[/cyan]        文件哈希 + 沙箱上传")
+    console.print("  [cyan]tutu -asset example.com[/cyan]      子域名 / DNS / 存活 / 端口攻击面梳理")
+    console.print("  [cyan]tutu -v CVE-2024-3400 --product nginx --check-version 1.18.0[/cyan]")
+    console.print("                                         判断本地版本是否受影响")
     console.print("  [cyan]tutu -config[/cyan]                 配置微步 / VirusTotal API Key")
     console.print("  [cyan]tutu sources[/cyan]                 查看全部数据源")
     console.print("  [cyan]tutu -v log4j --json[/cyan]         输出 JSON")

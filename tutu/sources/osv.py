@@ -11,6 +11,7 @@ from ..utils import (
     normalize_severity,
     short_date,
 )
+from ..versions import format_ranges, ranges_from_osv
 from .base import Source
 
 OSV_VULN_API = "https://api.osv.dev/v1/vulns/{vuln_id}"
@@ -60,6 +61,7 @@ class OsvSource(Source):
         summary = first_sentence(data.get("summary") or detail, 500)
         sev = _severity(data.get("severity") or [])
         products = _packages(data.get("affected") or [])
+        versions = ranges_from_osv(data)
         aliases = [a for a in (data.get("aliases") or []) if a and a != cve_id]
         refs = [
             r.get("url")
@@ -86,6 +88,8 @@ class OsvSource(Source):
                     "references": refs,
                     "description": detail,
                     "products": products,
+                    "version_ranges": versions,
+                    "affected_versions": format_ranges(versions),
                 },
             )
         ]

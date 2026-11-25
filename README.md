@@ -9,11 +9,16 @@
 ```bash
 tutu -v CVE-2026
 tutu CVE-2021-44228
+tutu -v CVE-2021-44228 --product log4j --check-version 2.14.1
 tutu -t APT28
 tutu -t lockbit --limit 10
+tutu -asset example.com
+tutu -asset example.com --ports top100 --ip-intel
 ```
 
 它会并行查询多个公开数据源，把同一个 CVE 的 NVD、CISA KEV、MITRE、OSV、CISA Vulnrichment、Exploit/PoC 等结果合并成一张卡片；`-t` 则用于 APT 组织、攻击活动、威胁新闻、漏洞通告、勒索软件受害者/组织等情报。
+
+`-asset` 用公开被动数据搜集子域名，再做 DNS 解析、HTTP 指纹和（可选的）端口扫描，把域名 → IP → 端口 → 服务 → 关联 CVE 整理成一张攻击面清单。
 
 > 所有默认源均不需要账号、API Key 或 Token。部分站点存在访问或登录限制，工具会尽量使用公开数据，并在“数据源状态”中明确标注限制，不会静默失败。
 
@@ -35,6 +40,17 @@ tutu -t lockbit --limit 10
   - FIRST EPSS 自动富化
   - 按 CVE 合并、去重、按 KEV / 严重性 / EPSS / 时间排序
   - 卡片展示 🎯 Affected Products（NVD CPE / SOCRadar / vulnx / Red Hat / OSV 等）
+  - 卡片展示 📦 受影响版本区间（NVD CPE / OSV ranges / MITRE / Vulnrichment / GitHub Advisory）
+  - `--check-version` 判断自己使用的版本是否落在受影响区间
+- **资产搜集 / 攻击面 `-asset`**
+  - 被动子域名：crt.sh、Cert Spotter、HackerTarget、RapidDNS、urlscan.io、subdomain.center
+  - DNS 解析：A / AAAA / CNAME（可选 MX / NS / TXT），优先 DNS-over-HTTPS，失败回退系统解析
+  - 泛解析（wildcard DNS）检测
+  - HTTP(S) 存活探测：状态码、标题、Server / X-Powered-By、跳转、TLS 信息
+  - Web 技术栈指纹（nginx、Apache、IIS、PHP、Tomcat、WordPress、Spring、WebLogic、Shiro、ThinkPHP…）
+  - 可选 TCP connect 端口扫描（`--ports top100|web|80,443|1-1024`，默认关闭）
+  - 资产指纹与 NVD 关联漏洞（只对带版本号的技术栈查询）
+  - 可选 IP 情报（`--ip-intel`）：信誉、ASN / 组织、被动端口
 - **威胁情报 `-t`**
   - 绿盟 NTI：APT 组织、攻击活动、威胁新闻、漏洞通告
   - 360 威胁情报：公开安全通告（站内检索受限时给出入口）
@@ -142,6 +158,20 @@ tutu -file sample.exe
 tutu -file sample.exe --no-upload
 tutu -file sample.exe --sandbox win10_1903_enx64_office2016 --run-time 120
 
+# 受影响版本判定：本地版本是否落在披露区间内
+tutu -v CVE-2021-44228 --product log4j --check-version 2.14.1
+tutu -v CVE-2024-3400 --product pan-os --check-version 10.2.9
+
+# 资产搜集 / 攻击面梳理
+tutu -asset example.com                        # 被动子域名 + DNS + HTTP 指纹
+tutu -asset example.com --ports web            # 额外扫描常见 Web 端口
+tutu -asset example.com --ports 80,443,8080    # 指定端口
+tutu -asset 203.0.113.10 --ports top100        # 单 IP 资产
+tutu -asset 10.0.0.0/24 --ports web            # CIDR（受 --asset-limit 限制）
+tutu -asset example.com --no-probe --json      # 只做子域名与 DNS，输出 JSON
+tutu -asset example.com --ip-intel             # 补充 IP 信誉 / 归属 / 被动端口
+tutu -asset example.com --no-asset-vuln        # 不做 NVD 漏洞关联
+
 # 配置微步 / VirusTotal API Key（本地持久化）
 tutu -config
 tutu config show
@@ -208,6 +238,16 @@ tutu -file sample.exe --no-upload
 | `-ip, --ip IP` | IP 信誉 / 归属 / IOC 查询 |
 | `-hash, --hash HASH` | MD5 / SHA1 / SHA256 哈希查询 |
 | `-file, --file PATH` | 文件哈希、公开情报与沙箱上传 |
+| `-asset, --asset DOMAIN|IP|CIDR` | 资产搜集：子域名 / DNS / 存活 / 指纹 / 端口 / 关联漏洞 |
+| `--check-version VERSION` | 配合 `-v`：判断该版本是否在受影响区间内 |
+| `--product NAME` | 配合 `--check-version` 指定产品名 |
+| `--ports PORTS` | 资产模式端口：`top100` / `web` / `80,443` / `1-1024`（默认关闭） |
+| `--no-probe` | 资产模式跳过 HTTP(S) 存活探测 |
+| `--asset-limit N` | 资产模式最多处理多少个子域名（默认 120） |
+| `--threads N` | 资产模式并发线程数（默认 12） |
+| `--no-asset-vuln` | 资产模式不做 NVD 漏洞关联 |
+| `--max-fingerprints N` | 资产模式最多关联多少个技术栈指纹（默认 5） |
+| `--ip-intel` | 资产模式补充公网 IP 信誉 / 归属 / 被动端口 |
 | `-config, --config` | 交互配置微步 / VirusTotal API Key |
 | `--no-upload` | `-file` 只做本地哈希和公开情报查询 |
 | `--sandbox TYPE` | 微步沙箱类型，默认 `win7_sp1_enx86_office2013` |
@@ -220,6 +260,59 @@ tutu -file sample.exe --no-upload
 | `--no-color` | 禁用彩色输出 |
 | `--debug` | 输出调试日志 |
 | `--version` | 版本号 |
+
+### 资产搜集（攻击面）
+
+`-asset` 按下面的顺序整理攻击面：
+
+```text
+域名
+ ├─ 被动子域名（crt.sh / Cert Spotter / HackerTarget / RapidDNS / urlscan.io / subdomain.center）
+ ├─ DNS 解析（A / AAAA / CNAME，DoH 优先）
+ ├─ HTTP(S) 存活探测（状态码 / 标题 / Server / 跳转 / TLS）
+ ├─ Web 技术栈指纹（产品 + 版本）
+ ├─ 可选端口扫描（--ports，默认关闭）
+ └─ 与 NVD 关联（只对带版本号的指纹查询，最多 --max-fingerprints 个）
+```
+
+默认行为是“被动优先”：
+
+- 输入支持域名、单个 IP 或 CIDR；IP / CIDR 会跳过被动子域名源，并按 `--asset-limit` 限制地址数量；
+- 只访问公开的证书日志 / 公开 API / 目标自身的 HTTP(S) 端口，不爆破子域名；
+- 端口扫描默认关闭，必须显式指定 `--ports`；
+- 默认每域名最多处理 120 个子域名（`--asset-limit`），避免误伤大域；
+- 扫描组合上限 50000（主机 × 端口），超过会直接报错。
+
+示例输出（简略）：
+
+```text
+资产攻击面  example.com
+子域名 42   主机 40   存活 12   服务 18   开放端口 6   关联 CVE 3   耗时 18.4s
+
+资产清单
+主机                 IP               HTTP  标题 / 技术栈            来源
+www.example.com      93.184.216.34    200   Example  nginx 1.18.0   crtsh, rapiddns
+...
+开放端口 / 服务
+example.com:8080     http-alt
+资产关联漏洞（NVD 指纹匹配）
+CVE-2021-23017       HIGH   www.example.com  nginx 1.18.0  f5/nginx 0.6.18 ~ 1.20.1
+```
+
+说明：
+
+- 漏洞关联使用 NVD `virtualMatchString`，每个指纹一次请求；未认证时 NVD 约 5 次/30 秒，可通过环境变量 `NVD_API_KEY` / `TUTU_NVD_API_KEY` 提高配额。
+- 指纹版本来自响应头（如 `Server: nginx/1.18.0`）或页面特征，识别不到版本时会跳过关联，避免误报。
+- `--ip-intel` 会额外调用 IP 情报源；对公网 IP 默认最多查询 20 个。
+- **请只对自己拥有或已获授权的资产使用端口扫描与存活探测。**
+
+JSON：
+
+```bash
+tutu -asset example.com --ports web --json > assets.json
+```
+
+输出包含 `assets[]`（子域名、IP、CNAME、服务、开放端口）、`cve_hits[]`、`source_results[]`、`stats` 与 `notes`。
 
 ### 数据源名称
 
@@ -235,6 +328,12 @@ exploitdb  sploitus  redhat  github
 ```text
 nsfocus  360  threatbook  loudong  socradar_ioc
 ransomware_live  ransomlook  socradar  ransomwatch
+```
+
+资产（被动）：
+
+```text
+crtsh  certspotter  hackertarget  rapiddns  urlscan  subdomain_center
 ```
 
 - `github` 默认关闭：GitHub Advisory API 未认证时只有 60 次/小时。若已有 `GITHUB_TOKEN`，工具会自动读取该环境变量。
@@ -255,6 +354,7 @@ tutu  ·  漏洞与威胁情报聚合搜索
 │ Apache Log4j2 ...                                            │
 │ 来源: NVD · CISA KEV · MITRE CVE · OSV.dev · CISA Vulnrichment│
 │ 发布: 2021-12-10   更新: 2026-10-24                          │
+│ 📦 受影响版本: apache/log4j 2.0.1 ~ 2.3.1 · 2.4.0 ~ 2.12.2  │
 │ 标签: CWE-502, apache/log4j ...                              │
 │ Exploit/PoC (5):                                             │
 │   ↳ Log4Shell RCE ...                                        │
@@ -263,10 +363,13 @@ tutu  ·  漏洞与威胁情报聚合搜索
 
 `--json` 输出包含：
 
-- `vulnerabilities`：合并后的漏洞卡片（含 KEV、EPSS、`affected_products`、Exploit 列表）
+- `vulnerabilities`：合并后的漏洞卡片（含 KEV、EPSS、`affected_products`、`affected_versions`、`version_ranges`、Exploit 列表）
 - `exploits`：未关联到 CVE 的 Exploit/PoC
 - `threat_intel`：按来源分组的情报结果
 - `sources`：漏洞源状态（条数、耗时、错误、备注）
+- `version_check`：使用 `--check-version` 时给出 `affected` / `unaffected` / `unknown`
+
+`-asset --json` 输出包含 `assets`（子域名、IP、CNAME、服务、端口）、`cve_hits`、`source_results`、`stats` 与 `notes`。
 
 ---
 
@@ -293,6 +396,14 @@ tutu  ·  漏洞与威胁情报聚合搜索
 | RansomLook | 勒索情报 | 否 | 公开 API |
 | SOCRadar Ransomware | 勒索情报 | 否 | 公开 Web API；可能受访问策略影响 |
 | Ransomwatch | 勒索情报 | 否 | GitHub 公开 JSON，本地缓存 12 小时 |
+| crt.sh | 资产 | 否 | 公开 CT 日志；请求较慢时可能 502，失败不影响其他源 |
+| Cert Spotter | 资产 | 否 | 公开 CT 日志 API，未认证有限流 |
+| HackerTarget | 资产 | 否 | 公开 hostsearch API，免费额度有限 |
+| RapidDNS | 资产 | 否 | 公开子域名聚合页，HTML 解析 |
+| urlscan.io | 资产 | 否 | 公开搜索 API，只取页面域名 |
+| subdomain.center | 资产 | 否 | 公开聚合 API，结果质量不稳定且可能繁忙 |
+| dns.google | 资产 | 否 | DNS-over-HTTPS 解析 A / AAAA / CNAME |
+| NVD `virtualMatchString` | 资产 | 否（可选 Key） | 资产指纹→CVE 关联；未认证约 5 次/30 秒 |
 
 ### 实际使用的公开接口 / 抓取路径
 
@@ -316,6 +427,14 @@ tutu  ·  漏洞与威胁情报聚合搜索
 | RansomLook | `/api/search?q=` | 组织 / 帖子 |
 | SOCRadar | `/api/ransomware/search?q=` | 受害者 / 组织 |
 | Ransomwatch | `raw.githubusercontent.com/joshhighet/ransomwatch/main/posts.json` | 泄露帖子 |
+| crt.sh | `/?q=%.{domain}&output=json` | 证书透明日志子域名 |
+| Cert Spotter | `/v1/issuances?domain=` | 证书透明日志子域名 |
+| HackerTarget | `/hostsearch/?q=` | 子域名 + IP |
+| RapidDNS | `/subdomain/{domain}?full=1` | 子域名 HTML |
+| urlscan.io | `/api/v1/search/?q=domain:{domain}` | 公开扫描结果域名 |
+| subdomain.center | `/?domain=` | 公开子域名聚合 |
+| dns.google | `/resolve?name=&type=` | DoH 解析 A / AAAA / CNAME |
+| NVD | `/rest/json/cves/2.0?virtualMatchString=` | 资产指纹关联 CVE |
 | ipwho.is | `/8.8.8.8` | IP 归属 |
 | ipinfo.io | `/{ip}/json` | IP 归属 / 主机名 |
 | ip-api.com | `/json/{ip}` | IP 归属 / 代理标记 |
@@ -350,6 +469,7 @@ export TUTU_CACHE_DIR=/tmp/tutu-cache
 - ransomware.live 组织列表：6 小时；受害者检索：10 分钟
 - Ransomwatch：12 小时
 - loudong 搜索 / 列表页：30~60 分钟
+- 资产搜集的被动子域名结果：1 小时（按域名 + 数据源缓存）
 
 ---
 
@@ -358,11 +478,20 @@ export TUTU_CACHE_DIR=/tmp/tutu-cache
 ```text
 tutu/
 ├── cli.py                 # argparse CLI
-├── search.py              # 并行调度、CVE 合并、EPSS 富化
+├── search.py              # 并行调度、CVE 合并、EPSS 富化、版本判定
 ├── render.py              # Rich 终端输出
 ├── http.py                # 带重试的 HTTP 客户端
 ├── cache.py               # 本地 JSON 缓存
 ├── models.py              # Item / SourceResult / VulnCard
+├── versions.py            # 受影响版本区间解析、比较与匹配
+├── assets/
+│   ├── attack.py          # 资产搜集主流程
+│   ├── subdomain.py       # 被动子域名源
+│   ├── dns.py             # DoH / 系统 DNS 解析
+│   ├── probe.py           # HTTP(S) 存活与 Web 指纹
+│   ├── ports.py           # 可选端口扫描
+│   ├── correlate.py       # 资产指纹 → NVD 漏洞关联
+│   └── models.py          # Asset / Service / PortResult / AttackSurface
 └── sources/
     ├── nvd.py
     ├── kev.py

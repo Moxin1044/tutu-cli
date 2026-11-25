@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 from .http import DEFAULT_UA, HttpClient
 from .models import Item, SourceResult, VulnCard
@@ -16,6 +16,7 @@ from .utils import (
     short_date,
     severity_rank,
 )
+from .versions import VersionRange, range_matches_product, sort_ranges
 
 log = logging.getLogger("tutu.search")
 
@@ -154,6 +155,9 @@ def merge_vulnerabilities(
                 product = str(product).strip()
                 if product and product not in card.affected_products:
                     card.affected_products.append(product)
+            for rng in (item.extra or {}).get("version_ranges") or []:
+                if isinstance(rng, VersionRange):
+                    card.version_ranges.append(rng)
             for tag in item.tags:
                 tag = str(tag).strip()
                 if tag and tag not in card.tags:
@@ -168,6 +172,7 @@ def merge_vulnerabilities(
     for card in cards.values():
         card.tags = card.tags[:10]
         card.affected_products = card.affected_products[:12]
+        card.version_ranges = sort_ranges(card.version_ranges)[:40]
         card.refs = card.refs[:8]
         deduped: List[Item] = []
         seen_urls = set()
@@ -226,3 +231,48 @@ def enrich_cards(cards: Sequence[VulnCard], timeout: float) -> None:
 
 def is_exact_query(query: str) -> bool:
     return is_exact_cve(query)
+
+
+def check_version(
+    cards: Sequence[VulnCard],
+    product: str,
+    version: str,
+) -> Dict[str, Any]:
+    """判断给定产品/版本是否落在卡片披露的受影响区间内。
+
+    返回 {affected, unaffected, unknown}，每项是 {cve, product, range}。
+    """
+    affected: List[Dict[str, str]] = []
+    unaffected: List[Dict[str, str]] = []
+    unknown: List[Dict[str, str]] = []
+    for card in cards:
+        ranges = [
+            rng
+            for rng in card.version_ranges
+            if not product or range_matches_product(rng, product)
+        ]
+        if not ranges:
+            unknown.append({"cve": card.cve, "product": product, "range": ""})
+            continue
+        hits = [rng for rng in ranges if rng.contains(version)]
+        if hits:
+            affected.append(
+                {
+                    "cve": card.cve,
+                    "product": hits[0].product,
+                    "range": hits[0].label(),
+                }
+            )
+            continue
+        unaffected.append(
+            {
+                "cve": card.cve,
+                "product": ranges[0].product,
+                "range": ranges[0].label(),
+            }
+        )
+    return {
+        "affected": affected,
+        "unaffected": unaffected,
+        "unknown": unknown,
+    }

@@ -3,9 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
+from .versions import VersionRange, format_ranges
+
 
 def _jsonable(value: Any) -> Any:
     if isinstance(value, Item):
+        return value.to_dict()
+    if isinstance(value, VersionRange):
         return value.to_dict()
     if isinstance(value, dict):
         return {str(k): _jsonable(v) for k, v in value.items()}
@@ -65,8 +69,12 @@ class VulnCard:
     ransomware: bool = False
     epss: float = 0.0
     epss_percentile: float = 0.0
+    version_ranges: List[VersionRange] = field(default_factory=list)
     exploits: List[Item] = field(default_factory=list)
     items: List[Item] = field(default_factory=list)
+
+    def affected_versions(self, limit: int = 8) -> List[str]:
+        return format_ranges(self.version_ranges, limit)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -79,6 +87,8 @@ class VulnCard:
             "sources": self.sources,
             "tags": self.tags,
             "affected_products": self.affected_products,
+            "affected_versions": self.affected_versions(),
+            "version_ranges": [r.to_dict() for r in self.version_ranges],
             "refs": self.refs,
             "kev": self.kev,
             "ransomware": self.ransomware,

@@ -11,6 +11,7 @@ from ..utils import (
     normalize_severity,
     short_date,
 )
+from ..versions import VersionRange, format_ranges, ranges_from_mitre_versions
 from .base import Source
 
 CVE_API = "https://cveawg.mitre.org/api/cve/{cve_id}"
@@ -52,6 +53,20 @@ def _affected(cna: Dict[str, Any], limit: int = 6) -> List[str]:
     return out
 
 
+def _affected_ranges(cna: Dict[str, Any], limit: int = 16) -> List[VersionRange]:
+    out: List[VersionRange] = []
+    for row in cna.get("affected") or []:
+        if not isinstance(row, dict):
+            continue
+        vendor = clean_text(row.get("vendor", ""))
+        product = clean_text(row.get("product", ""))
+        label = "/".join([p for p in (vendor, product) if p])
+        out.extend(ranges_from_mitre_versions(label, row.get("versions") or []))
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
 class MitreCveSource(Source):
     name = "mitre"
     label = "MITRE CVE"
@@ -82,6 +97,7 @@ class MitreCveSource(Source):
             if isinstance(r, dict) and r.get("url")
         ][:5]
         products = _affected(cna)
+        versions = _affected_ranges(cna)
         tags: List[str] = []
         for problem in cna.get("problemTypes") or []:
             for row in problem.get("descriptions") or []:
@@ -109,6 +125,8 @@ class MitreCveSource(Source):
                     "references": refs,
                     "description": desc,
                     "products": products,
+                    "version_ranges": versions,
+                    "affected_versions": format_ranges(versions),
                 },
             )
         ]

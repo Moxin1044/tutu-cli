@@ -12,6 +12,12 @@ from ..utils import (
     normalize_severity,
     short_date,
 )
+from ..versions import (
+    VersionRange,
+    format_ranges,
+    parse_cpe,
+    ranges_from_mitre_versions,
+)
 from .base import Source
 
 RAW = (
@@ -60,6 +66,53 @@ def _walk_ssvc(obj: Any, out: List[str]) -> None:
             _walk_ssvc(row, out)
 
 
+def _affected_containers(
+    containers: Dict[str, Any],
+    limit: int = 16,
+) -> tuple:
+    """从 CNA / ADP 的 affected 中提取产品名与版本区间。"""
+    products: List[str] = []
+    ranges: List[VersionRange] = []
+    rows: List[Dict[str, Any]] = []
+    cna = containers.get("cna") or {}
+    if isinstance(cna, dict):
+        rows.extend(r for r in (cna.get("affected") or []) if isinstance(r, dict))
+    for adp in containers.get("adp") or []:
+        if isinstance(adp, dict):
+            rows.extend(r for r in (adp.get("affected") or []) if isinstance(r, dict))
+    for row in rows:
+        vendor = clean_text(row.get("vendor") or "")
+        product = clean_text(row.get("product") or "")
+        label = "/".join(x for x in (vendor, product) if x)
+        if label and label not in products:
+            products.append(label)
+        ranges.extend(
+            ranges_from_mitre_versions(label, row.get("versions") or [])
+        )
+        for cpe in row.get("cpes") or []:
+            cpe = clean_text(str(cpe))
+            if not cpe.startswith("cpe:"):
+                continue
+            parsed = parse_cpe(cpe)
+            version = (parsed.get("version") or "").strip()
+            if version in ("", "*", "-"):
+                continue
+            cpe_label = "/".join(
+                x for x in (parsed.get("vendor", ""), parsed.get("product", "")) if x
+            )
+            ranges.append(
+                VersionRange(
+                    product=label or cpe_label or "未知产品",
+                    exact=[version],
+                    source="vulnrichment",
+                    cpe=cpe,
+                )
+            )
+        if len(ranges) >= limit:
+            break
+    return products[:8], ranges[:limit]
+
+
 class VulnrichmentSource(Source):
     name = "vulnrichment"
     label = "CISA Vulnrichment"
@@ -95,6 +148,7 @@ class VulnrichmentSource(Source):
         metric = metric_rows[0] if metric_rows else {}
         ssvc: List[str] = []
         _walk_ssvc(data, ssvc)
+        products, version_ranges = _affected_containers(containers)
         refs: List[str] = []
         for container in (cna, *[a for a in (containers.get("adp") or []) if isinstance(a, dict)]):
             for ref in container.get("references") or []:
@@ -118,6 +172,9 @@ class VulnrichmentSource(Source):
                     "vector": metric.get("vectorString") or "",
                     "ssvc": ssvc[:8],
                     "references": refs[:5],
+                    "products": products,
+                    "version_ranges": version_ranges,
+                    "affected_versions": format_ranges(version_ranges),
                 },
             )
         ]

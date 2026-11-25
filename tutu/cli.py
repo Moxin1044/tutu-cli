@@ -9,6 +9,8 @@ from typing import Dict, List, Optional, Sequence
 from rich.console import Console
 
 from . import __version__
+from .assets import PROVIDERS as ASSET_PROVIDERS, collect_assets
+from .assets.ports import PortSpecError, parse_ports
 from .config import (
     PROVIDERS,
     config_path,
@@ -22,6 +24,7 @@ from .lookup.hash import lookup_hash
 from .lookup.ip import lookup_ip
 from .models import SourceResult
 from .render import (
+    print_asset_report,
     print_error,
     print_file_report,
     print_hash_report,
@@ -31,7 +34,13 @@ from .render import (
     print_sources,
     print_vuln_results,
 )
-from .search import enrich_cards, merge_vulnerabilities, run_sources, sort_cards
+from .search import (
+    check_version,
+    enrich_cards,
+    merge_vulnerabilities,
+    run_sources,
+    sort_cards,
+)
 from .sources import (
     DEFAULT_INTEL_SOURCES,
     DEFAULT_VULN_SOURCES,
@@ -88,6 +97,9 @@ def build_parser() -> argparse.ArgumentParser:
             "  tutu -ip 8.8.8.8\n"
             "  tutu -hash 44d88612fea8a8f36de82e1278abb02f\n"
             "  tutu -file sample.exe --no-upload\n"
+            "  tutu -asset example.com\n"
+            "  tutu -asset example.com --ports top100 --ip-intel\n"
+            "  tutu -v CVE-2024-3400 --product nginx --check-version 1.18.0\n"
             "  tutu -config\n"
             "  tutu sources\n"
         ),
@@ -99,6 +111,63 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-ip", "--ip", metavar="IP", help="IP 信誉 / 归属 / IOC 查询")
     parser.add_argument("-hash", "--hash", metavar="HASH", help="MD5 / SHA1 / SHA256 哈希情报查询")
     parser.add_argument("-file", "--file", metavar="PATH", help="文件哈希、公开情报查询与沙箱上传")
+    parser.add_argument(
+        "-asset",
+        "--asset",
+        metavar="DOMAIN|IP|CIDR",
+        help="资产搜集：子域名 / DNS / 存活 / Web 指纹 / 端口 / 关联漏洞",
+    )
+    parser.add_argument(
+        "--check-version",
+        metavar="VERSION",
+        help="配合 -v 使用：判断该版本是否落在披露的受影响区间",
+    )
+    parser.add_argument(
+        "--product",
+        metavar="NAME",
+        help="配合 --check-version 指定产品名（如 nginx、log4j）",
+    )
+    parser.add_argument(
+        "--ports",
+        metavar="PORTS",
+        help="资产模式端口范围：top100 / web / 80,443 / 1-1024（默认不扫描）",
+    )
+    parser.add_argument(
+        "--no-probe",
+        action="store_true",
+        help="资产模式跳过 HTTP(S) 存活探测与指纹识别",
+    )
+    parser.add_argument(
+        "--asset-limit",
+        type=int,
+        default=120,
+        metavar="N",
+        help="资产模式最多处理的子域名数量（默认 120）",
+    )
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=12,
+        metavar="N",
+        help="资产模式并发线程数（默认 12）",
+    )
+    parser.add_argument(
+        "--no-asset-vuln",
+        action="store_true",
+        help="资产模式不关联漏洞（默认对带版本号的技术栈查询 NVD）",
+    )
+    parser.add_argument(
+        "--max-fingerprints",
+        type=int,
+        default=5,
+        metavar="N",
+        help="资产模式最多关联漏洞的指纹数量（默认 5）",
+    )
+    parser.add_argument(
+        "--ip-intel",
+        action="store_true",
+        help="资产模式为解析到的公网 IP 补充信誉 / 归属 / 被动端口情报",
+    )
     parser.add_argument("-config", "--config", action="store_true", help="交互配置微步 / VirusTotal API Key")
     parser.add_argument(
         "-s",
@@ -152,6 +221,7 @@ def _json_output(
     cards,
     exploits,
     intel_results: Sequence[SourceResult],
+    version_check: Optional[Dict] = None,
 ) -> str:
     payload = {
         "version": __version__,
@@ -161,6 +231,8 @@ def _json_output(
         "threat_intel": [_result_dict(r) for r in intel_results],
         "sources": [_result_dict(r) for r in vuln_results],
     }
+    if version_check is not None:
+        payload["version_check"] = version_check
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -170,6 +242,14 @@ def _json_special(kind: str, report: Dict) -> str:
         ensure_ascii=False,
         indent=2,
     )
+
+
+def _version_check_payload(cards, args) -> Dict:
+    result = check_version(cards, args.product or "", args.check_version or "")
+    result["product"] = args.product or ""
+    result["version"] = args.check_version or ""
+    result["empty"] = not cards
+    return result
 
 
 def _handle_config(args, console) -> int:
@@ -218,6 +298,20 @@ def _handle_config(args, console) -> int:
     return 0
 
 
+def _run_special(kind: str, value: str, args) -> Dict:
+    if kind == "ip":
+        return lookup_ip(value, timeout=max(args.timeout, 15.0))
+    if kind == "hash":
+        return lookup_hash(value, timeout=max(args.timeout, 20.0))
+    return analyze_file(
+        value,
+        timeout=max(args.timeout, 30.0),
+        no_upload=args.no_upload,
+        sandbox_type=args.sandbox,
+        run_time=args.run_time,
+    )
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -236,8 +330,62 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return config_rc
 
     if args.query and args.query.lower() in ("sources", "source", "list"):
-        print_sources(console, [cls() for cls in VULN_SOURCES.values()], [cls() for cls in INTEL_SOURCES.values()])
+        print_sources(
+            console,
+            [cls() for cls in VULN_SOURCES.values()],
+            [cls() for cls in INTEL_SOURCES.values()],
+            ASSET_PROVIDERS,
+        )
         return 0
+
+    if args.asset:
+        if args.vuln or args.threat or args.ip or args.hash or args.file:
+            print_error(console, "-asset 不能和 -v / -t / -ip / -hash / -file 同时使用")
+            return 2
+        if args.check_version:
+            print_error(console, "--check-version 不能与 -asset 同时使用")
+            return 2
+        if args.extra:
+            print_error(console, "无法识别的参数: " + " ".join(args.extra))
+            return 2
+        try:
+            ports = parse_ports(args.ports)
+        except PortSpecError as exc:
+            print_error(console, str(exc))
+            return 2
+
+        def _collect():
+            return collect_assets(
+                args.asset,
+                timeout=args.timeout,
+                limit=max(1, args.asset_limit),
+                ports=ports,
+                probe_http=not args.no_probe,
+                threads=max(1, args.threads),
+                correlate=not args.no_asset_vuln,
+                max_fingerprints=max(1, args.max_fingerprints),
+                ip_intel=args.ip_intel,
+                debug=args.debug,
+            )
+
+        try:
+            if args.json:
+                surface = _collect()
+            else:
+                with console.status("[cyan]正在搜集资产…[/cyan]", spinner="dots"):
+                    surface = _collect()
+        except (ValueError, SourceError) as exc:
+            print_error(console, str(exc))
+            return 2
+        if args.json:
+            print(_json_special("assets", surface.to_dict()))
+            return 0
+        print_asset_report(console, surface)
+        return 0
+
+    if args.ports:
+        print_error(console, "--ports 仅用于 -asset 资产搜集模式")
+        return 2
 
     special = [
         ("ip", args.ip),
@@ -254,19 +402,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if special:
         kind, value = special[0]
         try:
-            with console.status("[cyan]正在查询…[/cyan]", spinner="dots"):
-                if kind == "ip":
-                    report = lookup_ip(value, timeout=max(args.timeout, 15.0))
-                elif kind == "hash":
-                    report = lookup_hash(value, timeout=max(args.timeout, 20.0))
-                else:
-                    report = analyze_file(
-                        value,
-                        timeout=max(args.timeout, 30.0),
-                        no_upload=args.no_upload,
-                        sandbox_type=args.sandbox,
-                        run_time=args.run_time,
-                    )
+            if args.json:
+                report = _run_special(kind, value, args)
+            else:
+                with console.status("[cyan]正在查询…[/cyan]", spinner="dots"):
+                    report = _run_special(kind, value, args)
         except (ValueError, SourceError) as exc:
             print_error(console, str(exc))
             return 2
@@ -305,10 +445,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print_error(console, "没有可用的威胁情报数据源，请检查 --sources")
         return 2
 
+    if args.check_version and not vuln_query:
+        print_error(console, "--check-version 需要配合 -v 或 CVE 查询使用")
+        return 2
+
     vuln_results: List[SourceResult] = []
     intel_results: List[SourceResult] = []
     cards = []
     exploits = []
+    version_check: Optional[Dict] = None
 
     if not args.json:
         with console.status("[cyan]正在聚合搜索…[/cyan]", spinner="dots"):
@@ -325,6 +470,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 if cards:
                     enrich_cards(cards, args.timeout)
                     cards = sort_cards(cards)[:limit]
+                if args.check_version:
+                    version_check = _version_check_payload(cards, args)
             if threat_query:
                 intel_results = run_sources(
                     intel_sources,
@@ -348,6 +495,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if cards:
                 enrich_cards(cards, args.timeout)
                 cards = sort_cards(cards)[:limit]
+            if args.check_version:
+                version_check = _version_check_payload(cards, args)
         if threat_query:
             intel_results = run_sources(
                 intel_sources,
@@ -365,6 +514,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 cards,
                 exploits,
                 intel_results,
+                version_check,
             )
         )
         return 0
@@ -377,6 +527,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             exploits,
             vuln_results,
             limit,
+            version_check,
         )
     if threat_query:
         if vuln_query:

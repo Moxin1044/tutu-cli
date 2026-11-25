@@ -66,6 +66,14 @@ class HttpClient:
     def get(self, url: str, **kwargs: Any) -> requests.Response:
         return self.request("GET", url, **kwargs)
 
+    def request_raw(self, method: str, url: str, **kwargs: Any) -> requests.Response:
+        """不因 4xx/5xx 抛错的请求，用于资产探测。"""
+        kwargs.setdefault("timeout", self.timeout)
+        try:
+            return self.session.request(method, url, **kwargs)
+        except requests.RequestException as exc:
+            raise SourceError(_short_error(exc)) from exc
+
     def post(self, url: str, **kwargs: Any) -> requests.Response:
         return self.request("POST", url, **kwargs)
 

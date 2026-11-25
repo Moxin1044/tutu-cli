@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tutu-cli"
-version = "0.2.3"
-description = "tutu — 多源漏洞与威胁情报聚合搜索 CLI（NVD / CISA KEV / NSFOCUS / 微步 / 360 / 勒索软件情报等）"
+version = "0.3.0"
+description = "tutu — 多源漏洞与威胁情报聚合搜索 CLI，含受影响版本判定与资产攻击面梳理"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "tutu contributors" }]
-keywords = ["vulnerability", "threat-intelligence", "cve", "nvd", "kev", "ransomware", "osint", "cli"]
+keywords = ["vulnerability", "threat-intelligence", "cve", "nvd", "kev", "ransomware", "osint", "attack-surface", "subdomain", "recon", "cli"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",

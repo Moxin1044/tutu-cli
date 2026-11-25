@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.3.0 — 2026-11-25
+
+### 漏洞受影响版本
+
+- 新增 `tutu/versions.py`：统一解析 CPE、OSV ranges、MITRE `versions`、GitHub Advisory 版本范围
+- 漏洞卡片新增 📦 受影响版本区间（如 `apache/log4j 2.13.0 ~ 2.15.0（不含 2.15.0）`）
+- JSON 新增 `affected_versions` 与 `version_ranges`
+- 新增 `--check-version` / `--product`：判断本地版本是否落入受影响区间
+- `--json` 新增 `version_check`（affected / unaffected / unknown）
+
+### 资产搜集 / 攻击面
+
+- 新增 `-asset, --asset DOMAIN`
+- 被动子域名：crt.sh、Cert Spotter、HackerTarget、RapidDNS、urlscan.io、subdomain.center
+- DNS 解析：A / AAAA / CNAME，DNS-over-HTTPS 优先，失败回退系统解析
+- 泛解析检测、HTTP(S) 存活探测、TLS 信息、Web 技术栈指纹
+- 可选端口扫描：`--ports top100|web|80,443|1-1024`（默认关闭，组合上限 50000）
+- 资产指纹 → NVD 关联 CVE（`virtualMatchString`，支持 `NVD_API_KEY`）
+- 可选 IP 情报：`--ip-intel`
+- 新增 `--asset-limit` / `--threads` / `--no-probe` / `--no-asset-vuln` / `--max-fingerprints`
+- `tutu sources` 增加资产搜集数据源
+- 被动子域名结果缓存 1 小时
+
+### 其他
+
+- 版本号升级到 0.3.0
+- 新增 `tests/test_assets_versions.py`
+
 ## 0.2.3 — 2026-11-21
 
 - README 移除“关于反爬”章节及相关表述

@@ -6,6 +6,7 @@ from typing import List
 from ..http import HttpClient
 from ..models import Item
 from ..utils import clean_text, first_sentence, normalize_severity, short_date
+from ..versions import format_ranges, ranges_from_string
 from .base import Source
 
 GH_ADVISORIES = "https://api.github.com/advisories"
@@ -36,6 +37,8 @@ class GithubAdvisorySource(Source):
                 continue
             tags = [t for t in (row.get("cwes") or []) if t]
             products = []
+            ranges = []
+            patched = []
             for vuln in row.get("vulnerabilities") or []:
                 package = (vuln or {}).get("package") or {}
                 name = clean_text(package.get("name") or "")
@@ -43,6 +46,11 @@ class GithubAdvisorySource(Source):
                 label = f"{ecosystem}/{name}" if ecosystem else name
                 if label and label not in products:
                     products.append(label)
+                vuln_range = clean_text((vuln or {}).get("vulnerable_version_range") or "")
+                ranges.extend(ranges_from_string(label, vuln_range, "github"))
+                patched_range = clean_text((vuln or {}).get("patched_versions") or "")
+                if patched_range and patched_range not in patched:
+                    patched.append(f"{label}: {patched_range}")
             items.append(
                 Item(
                     source=self.name,
@@ -60,6 +68,9 @@ class GithubAdvisorySource(Source):
                         "modified": row.get("updated_at") or "",
                         "references": row.get("references") or [],
                         "products": products[:8],
+                        "version_ranges": ranges,
+                        "affected_versions": format_ranges(ranges),
+                        "patched_versions": patched[:6],
                     },
                 )
             )

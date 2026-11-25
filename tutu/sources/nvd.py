@@ -11,6 +11,7 @@ from ..utils import (
     normalize_severity,
     short_date,
 )
+from ..versions import VersionRange, ranges_from_cpe
 from .base import Source
 
 NVD_API = "https://services.nvd.nist.gov/rest/json/cves/2.0"
@@ -54,24 +55,69 @@ def _cwe(cve: Dict[str, Any]) -> List[str]:
     return out
 
 
-def _products(cve: Dict[str, Any], limit: int = 6) -> List[str]:
-    out: List[str] = []
+def _version_ranges(cve: Dict[str, Any], limit: int = 400) -> List[VersionRange]:
+    out: List[VersionRange] = []
     for config in cve.get("configurations") or []:
         for node in config.get("nodes") or []:
             for match in node.get("cpeMatch") or []:
-                criteria = match.get("criteria") or ""
-                parts = criteria.split(":")
-                if len(parts) > 4:
-                    vendor, product = parts[3], parts[4]
-                    version = parts[5] if len(parts) > 5 else ""
-                    label = f"{vendor}/{product}"
-                    if version and version not in ("*", "-", ""):
-                        label += f" {version}"
-                    if label not in out:
-                        out.append(label)
+                if isinstance(match, dict) and match.get("vulnerable") is False:
+                    continue
+                rng = ranges_from_cpe(match, "nvd")
+                if rng is not None:
+                    out.append(rng)
                 if len(out) >= limit:
                     return out
     return out
+
+
+def _product_labels(ranges: List[VersionRange], limit: int = 6) -> List[str]:
+    out: List[str] = []
+    for rng in ranges:
+        if rng.product and rng.product not in out:
+            out.append(rng.product)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _products(cve: Dict[str, Any], limit: int = 6) -> List[str]:
+    return _product_labels(_version_ranges(cve), limit)
+
+
+def parse_vulnerability(cve: Dict[str, Any]) -> "Item":
+    """把 NVD 单条记录转换成 Item（供漏洞搜索与资产关联复用）。"""
+    cve_id = (cve.get("id") or "").upper()
+    metric = _pick_metric(cve.get("metrics") or {})
+    desc = _description(cve)
+    refs = [
+        r.get("url")
+        for r in (cve.get("references") or [])
+        if isinstance(r, dict) and r.get("url")
+    ][:5]
+    ranges = _version_ranges(cve)
+    return Item(
+        source="nvd",
+        category="vulnerability",
+        title=cve_id,
+        url=f"https://nvd.nist.gov/vuln/detail/{cve_id}",
+        date=short_date(cve.get("published") or ""),
+        summary=first_sentence(desc, 500),
+        severity=normalize_severity(metric.get("severity") or ""),
+        score=str(metric.get("score") or ""),
+        tags=_cwe(cve),
+        extra={
+            "cve": cve_id,
+            "published": cve.get("published") or "",
+            "modified": cve.get("lastModified") or "",
+            "status": cve.get("vulnStatus") or "",
+            "vector": metric.get("vector") or "",
+            "cvss_version": metric.get("version") or "",
+            "references": refs,
+            "description": desc,
+            "products": _product_labels(ranges, 6),
+            "version_ranges": ranges,
+        },
+    )
 
 
 class NvdSource(Source):
@@ -102,39 +148,7 @@ class NvdSource(Source):
             cve_id = (cve.get("id") or "").upper()
             if not cve_id:
                 continue
-            metric = _pick_metric(cve.get("metrics") or {})
-            desc = _description(cve)
-            refs = [
-                r.get("url")
-                for r in (cve.get("references") or [])
-                if isinstance(r, dict) and r.get("url")
-            ][:5]
-            tags = _cwe(cve)
-            items.append(
-                Item(
-                    source=self.name,
-                    category="vulnerability",
-                    title=cve_id,
-                    url=f"https://nvd.nist.gov/vuln/detail/{cve_id}",
-                    date=short_date(cve.get("published") or ""),
-                    summary=first_sentence(desc, 500),
-                    severity=normalize_severity(metric.get("severity") or ""),
-                    score=str(metric.get("score") or ""),
-                    tags=tags,
-                    extra={
-                        "cve": cve_id,
-                        "published": cve.get("published") or "",
-                        "modified": cve.get("lastModified") or "",
-                        "status": cve.get("vulnStatus") or "",
-                        "vector": metric.get("vector") or "",
-                        "cvss_version": metric.get("version") or "",
-                        "references": refs,
-                        "description": desc,
-                        "products": _products(cve),
-                        "total_results": data.get("totalResults"),
-                    },
-                )
-            )
+            items.append(parse_vulnerability(cve))
         total = data.get("totalResults")
         if total and int(total) > len(items):
             self.last_note = f"NVD 共 {total} 条，仅展示前 {len(items)} 条"
